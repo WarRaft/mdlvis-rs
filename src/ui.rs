@@ -1,5 +1,3 @@
-use egui::Context;
-
 use crate::model::Model;
 
 pub struct Ui {
@@ -20,6 +18,48 @@ impl Ui {
     }
 
     pub fn show(&mut self, ctx: &egui::Context, model: &Option<Model>) {
+        // TODO: Axis labels should be projected from 3D space and clamped to viewport
+        // Currently disabled until proper projection is implemented
+        /*
+        // Draw axis labels as overlay
+        let viewport = ctx.viewport_rect();
+        let margin = 30.0; // Отступ от краёв viewport
+        
+        egui::Area::new("axis_labels".into())
+            .fixed_pos(egui::pos2(0.0, 0.0))
+            .interactable(false)
+            .show(ctx, |ui| {
+                // Position labels at the ends of axes within viewport bounds
+                // X axis (red) - right side
+                ui.painter().text(
+                    egui::pos2(viewport.width() - margin, viewport.height() / 2.0),
+                    egui::Align2::CENTER_CENTER,
+                    "X",
+                    egui::FontId::proportional(20.0),
+                    egui::Color32::RED,
+                );
+                
+                // Y axis (green) - far end (top or bottom depending on camera)
+                // Typically points away into screen, show at bottom
+                ui.painter().text(
+                    egui::pos2(viewport.width() / 2.0, viewport.height() - margin),
+                    egui::Align2::CENTER_CENTER,
+                    "Y",
+                    egui::FontId::proportional(20.0),
+                    egui::Color32::GREEN,
+                );
+                
+                // Z axis (blue) - up, show at top
+                ui.painter().text(
+                    egui::pos2(viewport.width() / 2.0, margin),
+                    egui::Align2::CENTER_CENTER,
+                    "Z",
+                    egui::FontId::proportional(20.0),
+                    egui::Color32::BLUE,
+                );
+            });
+        */
+
         egui::SidePanel::left("left_panel")
             .default_width(250.0)
             .show(ctx, |ui| {
@@ -28,6 +68,7 @@ impl Ui {
                 if let Some(model) = model {
                     self.show_model_info(ui, model);
                     self.show_geosets_panel(ui, model);
+                    self.show_textures_panel(ui, model);
                     self.show_animation_panel(ui, model);
                 } else {
                     ui.label("No model loaded");
@@ -63,6 +104,21 @@ impl Ui {
         });
     }
 
+    fn show_textures_panel(&self, ui: &mut egui::Ui, model: &Model) {
+        ui.collapsing("Textures", |ui| {
+            if model.textures.is_empty() {
+                ui.label("No textures");
+            } else {
+                for (i, texture) in model.textures.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{}:", i));
+                        ui.label(&texture.filename);
+                    });
+                }
+            }
+        });
+    }
+
     fn show_animation_panel(&mut self, ui: &mut egui::Ui, model: &Model) {
         if model.sequences.is_empty() {
             return;
@@ -76,6 +132,17 @@ impl Ui {
                         ui.selectable_value(&mut self.selected_sequence, i, &seq.name);
                     }
                 });
+
+            // Show sequence details
+            let seq = &model.sequences[self.selected_sequence];
+            ui.label(format!("Frames: {} - {}", seq.start_frame, seq.end_frame));
+            ui.label(format!("Duration: {} frames", seq.end_frame - seq.start_frame));
+            ui.label(format!("Non-looping: {}", seq.non_looping));
+            if let Some(rarity) = seq.rarity {
+                ui.label(format!("Rarity: {}", rarity));
+            }
+
+            ui.separator();
 
             ui.horizontal(|ui| {
                 if ui.button(if self.is_playing { "⏸" } else { "▶" }).clicked() {

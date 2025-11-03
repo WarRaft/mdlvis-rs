@@ -85,6 +85,7 @@ pub enum FilterMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Texture {
     pub filename: String,
+    pub replaceable_id: u32, // 0 = normal texture, 1 = team color, 2 = team glow, etc.
     pub image_data: Option<Vec<u8>>,
     pub width: u32,
     pub height: u32,
@@ -97,6 +98,8 @@ pub struct Model {
     pub materials: Vec<Material>,
     pub textures: Vec<Texture>,
     pub sequences: Vec<Sequence>,
+    pub bones: Vec<Bone>,
+    pub helpers: Vec<Helper>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +111,47 @@ pub struct Sequence {
     pub non_looping: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Bone {
+    pub name: String,
+    pub object_id: u32,
+    pub parent_id: i32, // -1 means no parent
+    pub pivot_point: [f32; 3],
+    pub geoset_id: Option<u32>,
+    pub geoset_anim_id: Option<u32>,
+}
+
+impl Default for Bone {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            object_id: 0,
+            parent_id: -1,
+            pivot_point: [0.0, 0.0, 0.0],
+            geoset_id: None,
+            geoset_anim_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Helper {
+    pub name: String,
+    pub object_id: u32,
+    pub parent_id: i32, // -1 means no parent
+    pub pivot_point: [f32; 3],
+}
+
+impl Default for Helper {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            object_id: 0,
+            parent_id: -1,
+            pivot_point: [0.0, 0.0, 0.0],
+        }
+    }
+}
 impl Default for Sequence {
     fn default() -> Self {
         Self {
@@ -128,6 +172,8 @@ impl Default for Model {
             materials: Vec::new(),
             textures: Vec::new(),
             sequences: Vec::new(),
+            bones: Vec::new(),
+            helpers: Vec::new(),
         }
     }
 }

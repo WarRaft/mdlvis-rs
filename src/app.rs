@@ -12,6 +12,7 @@ pub struct App {
     renderer: Renderer,
     mouse_pressed: bool,
     last_mouse_pos: Option<(f64, f64)>,
+    egui_state: egui_winit::State,
 }
 
 pub struct EventResponse {
@@ -27,6 +28,17 @@ impl App {
 
         // Initialize renderer
         let mut renderer = Renderer::new(&window).await?;
+
+        // Initialize egui_winit state
+        let egui_ctx = renderer.egui_context();
+        let egui_state = egui_winit::State::new(
+            egui_ctx.clone(),
+            egui::viewport::ViewportId::ROOT,
+            &*window,
+            None,
+            None,
+            None,
+        );
 
         // Load test model
         let model = match crate::parser::load_mdl("test-data/Arthas.mdx") {
@@ -47,10 +59,19 @@ impl App {
             renderer,
             mouse_pressed: false,
             last_mouse_pos: None,
+            egui_state,
         })
     }
 
     pub fn handle_event(&mut self, event: &winit::event::WindowEvent) -> EventResponse {
+        // Let egui handle the event first
+        let egui_response = self.egui_state.on_window_event(&self.window, event);
+        
+        // If egui consumed the event, don't process it further
+        if egui_response.consumed {
+            return EventResponse { repaint: egui_response.repaint, exit: false };
+        }
+
         // Handle window events
         match event {
             winit::event::WindowEvent::CloseRequested => {
@@ -102,6 +123,22 @@ impl App {
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        self.renderer.render()
+        let raw_input = self.egui_state.take_egui_input(&self.window);
+        let egui_ctx = self.renderer.egui_context();
+        
+        let full_output = egui_ctx.run(raw_input, |ctx| {
+            self.ui.show(ctx, &self.model);
+        });
+
+        self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
+
+        let paint_jobs = egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+        
+        let screen_descriptor = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [self.window.inner_size().width, self.window.inner_size().height],
+            pixels_per_point: self.window.scale_factor() as f32,
+        };
+
+        self.renderer.render(paint_jobs, full_output.textures_delta, screen_descriptor)
     }
 }

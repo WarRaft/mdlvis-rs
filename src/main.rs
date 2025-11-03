@@ -1,5 +1,5 @@
 use winit::{
-    event::{Event, WindowEvent},
+    event::Event,
     event_loop::{ControlFlow, EventLoop},
     window::Window,
 };
@@ -8,6 +8,7 @@ mod app;
 mod model;
 mod parser;
 mod renderer;
+mod texture_loader;
 mod ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
