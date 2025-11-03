@@ -97,45 +97,68 @@ fn load_mdx(file: &mut File) -> Result<Model, Box<dyn std::error::Error>> {
 }
 
 fn read_geosets(file: &mut File, model: &mut Model, _geos_size: u32) -> Result<(), Box<dyn std::error::Error>> {
+    // Read first geoset from Arthas.mdx
+    // Skip GEOS sub-chunk size (4 bytes)
+    let _geoset_size = file.read_u32::<LittleEndian>()?;
+    
     let mut geoset = Geoset::default();
 
-    // Skip to VRTX data: skip4 + VRTX + sub_size
-    file.seek(SeekFrom::Current(4 + 4 + 4))?;
-
-    let nvtx = 24; // Hardcoded for Arthas.mdx
-    println!("Reading {} vertices", nvtx);
-    for _ in 0..nvtx {
+    // Read VRTX chunk
+    let mut tag = [0u8; 4];
+    file.read_exact(&mut tag)?;
+    if &tag != b"VRTX" {
+        return Err(format!("Expected VRTX, got {:?}", String::from_utf8_lossy(&tag)).into());
+    }
+    let nverts = file.read_u32::<LittleEndian>()? as usize; // Number of vertices, not size!
+    println!("Reading {} vertices", nverts);
+    for _ in 0..nverts {
         let x = file.read_f32::<LittleEndian>()?;
         let y = file.read_f32::<LittleEndian>()?;
         let z = file.read_f32::<LittleEndian>()?;
-        geoset.vertices.push(Vertex { position: [x, y, z] });
+        geoset.vertices.push(crate::model::Vertex { position: [x, y, z] });
     }
 
-    // Skip to NRMS data: skip4 + NRMS + sub_size
-    file.seek(SeekFrom::Current(4 + 4 + 4))?;
-
-    let nnrms = 24; // Hardcoded for Arthas.mdx
-    println!("Reading {} normals", nnrms);
-    for _ in 0..nnrms {
+    // Read NRMS chunk
+    file.read_exact(&mut tag)?;
+    if &tag != b"NRMS" {
+        return Err(format!("Expected NRMS, got {:?}", String::from_utf8_lossy(&tag)).into());
+    }
+    let nnorms = file.read_u32::<LittleEndian>()? as usize; // Number of normals, not size!
+    println!("Reading {} normals", nnorms);
+    for _ in 0..nnorms {
         let x = file.read_f32::<LittleEndian>()?;
         let y = file.read_f32::<LittleEndian>()?;
         let z = file.read_f32::<LittleEndian>()?;
         geoset.normals.push(crate::model::Normal { normal: [x, y, z] });
     }
 
-    // Skip PTYP: skip4 + PTYP + sub_size + data
-    file.seek(SeekFrom::Current(4 + 4 + 4 + 4))?;
+    // Read and skip PTYP
+    file.read_exact(&mut tag)?;
+    if &tag != b"PTYP" {
+        return Err(format!("Expected PTYP, got {:?}", String::from_utf8_lossy(&tag)).into());
+    }
+    let ptyp_count = file.read_u32::<LittleEndian>()?;
+    file.seek(SeekFrom::Current((ptyp_count * 4) as i64))?; // Each entry is 4 bytes
 
-    // Skip PCNT: skip4 + PCNT + sub_size + data
-    file.seek(SeekFrom::Current(4 + 4 + 4 + 4))?;
+    // Read and skip PCNT  
+    file.read_exact(&mut tag)?;
+    if &tag != b"PCNT" {
+        return Err(format!("Expected PCNT, got {:?}", String::from_utf8_lossy(&tag)).into());
+    }
+    let pcnt_count = file.read_u32::<LittleEndian>()?;
+    file.seek(SeekFrom::Current((pcnt_count * 4) as i64))?; // Each entry is 4 bytes
 
-    // Skip to PVTX data: skip4 + PVTX + sub_size
-    file.seek(SeekFrom::Current(4 + 4 + 4))?;
-
-    let ntris = 310; // Hardcoded for Arthas.mdx
-    println!("Reading {} face indices", ntris);
+    // Read PVTX (vertex indices)
+    file.read_exact(&mut tag)?;
+    if &tag != b"PVTX" {
+        return Err(format!("Expected PVTX, got {:?}", String::from_utf8_lossy(&tag)).into());
+    }
+    
+    let num_indices = file.read_u32::<LittleEndian>()? as usize; // Number of indices, not size!
+    
+    println!("Reading {} face indices from PVTX", num_indices);
     let mut indices = Vec::new();
-    for _ in 0..ntris {
+    for _ in 0..num_indices {
         let index = file.read_u16::<LittleEndian>()?;
         indices.push(index as u32);
     }

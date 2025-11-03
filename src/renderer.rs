@@ -75,6 +75,7 @@ pub struct Renderer {
     camera_yaw: f32,
     camera_pitch: f32,
     camera_distance: f32,
+    model_center: [f32; 3],
 }
 
 impl Renderer {
@@ -82,7 +83,7 @@ impl Renderer {
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
@@ -106,8 +107,8 @@ impl Renderer {
                 required_limits: wgpu::Limits::default(),
                 label: None,
                 memory_hints: wgpu::MemoryHints::default(),
+                ..Default::default()
             },
-            None,
         ).await.unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
@@ -209,7 +210,7 @@ impl Renderer {
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Cw,
                 cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
+                polygon_mode: wgpu::PolygonMode::Fill, // Filled mode with checkerboard texture
                 unclipped_depth: false,
                 conservative: false,
             },
@@ -335,9 +336,10 @@ impl Renderer {
             num_lines,
             camera_buffer,
             camera_bind_group,
-            camera_yaw: 0.0,
-            camera_pitch: 0.0,
+            camera_yaw: std::f32::consts::PI * 0.25, // 45 degrees
+            camera_pitch: -0.3, // Look down slightly
             camera_distance: 200.0,
+            model_center: [0.0, 0.0, 0.0],
         })
     }
 
@@ -355,12 +357,12 @@ impl Renderer {
         let proj = nalgebra_glm::perspective(aspect, 45.0_f32.to_radians(), 0.1, 1000.0);
         
         let eye = nalgebra_glm::vec3(
-            self.camera_distance * self.camera_yaw.cos() * self.camera_pitch.cos(),
-            -self.camera_distance * self.camera_pitch.sin(), // Negated Y like Delphi glScalef(1,-1,1)
-            self.camera_distance * self.camera_yaw.sin() * self.camera_pitch.cos(),
+            self.model_center[0] + self.camera_distance * self.camera_yaw.cos() * self.camera_pitch.cos(),
+            self.model_center[1] + self.camera_distance * self.camera_pitch.sin(),
+            self.model_center[2] + self.camera_distance * self.camera_yaw.sin() * self.camera_pitch.cos(),
         );
-        let center = nalgebra_glm::vec3(0.0, 0.0, 0.0);
-        let up = nalgebra_glm::vec3(0.0, -1.0, 0.0); // Inverted Y axis to match Delphi
+        let center = nalgebra_glm::vec3(self.model_center[0], self.model_center[1], self.model_center[2]);
+        let up = nalgebra_glm::vec3(0.0, 1.0, 0.0);
         let view = nalgebra_glm::look_at(&eye, &center, &up);
         
         let view_proj = proj * view;
@@ -404,6 +406,7 @@ impl Renderer {
                         }),
                         store: wgpu::StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &depth_view,
@@ -424,11 +427,13 @@ impl Renderer {
             render_pass.draw(0..self.num_lines, 0..1);
 
             // Draw model
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            if self.num_indices > 0 {
+                render_pass.set_pipeline(&self.render_pipeline);
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -446,7 +451,47 @@ impl Renderer {
 
             let indices: Vec<u16> = geoset.faces.iter().flat_map(|f| f.vertices.iter().map(|&i| i as u16)).collect();
 
+            // Calculate bounding box to understand model position
+            if !vertices.is_empty() {
+                let mut min = vertices[0].position;
+                let mut max = vertices[0].position;
+                for v in &vertices {
+                    for i in 0..3 {
+                        min[i] = min[i].min(v.position[i]);
+                        max[i] = max[i].max(v.position[i]);
+                    }
+                }
+                println!("Model bounds: min({:.2}, {:.2}, {:.2}), max({:.2}, {:.2}, {:.2})", 
+                    min[0], min[1], min[2], max[0], max[1], max[2]);
+                
+                // Store model center for camera targeting
+                self.model_center = [
+                    (min[0] + max[0]) / 2.0,
+                    (min[1] + max[1]) / 2.0,
+                    (min[2] + max[2]) / 2.0,
+                ];
+                
+                println!("Center: ({:.2}, {:.2}, {:.2})", 
+                    self.model_center[0], self.model_center[1], self.model_center[2]);
+            }
+
             println!("Loaded {} vertices, {} indices ({} triangles)", vertices.len(), indices.len(), indices.len() / 3);
+            println!("Creating buffers with {} vertices and {} indices", vertices.len(), indices.len());
+            
+            // Debug: print first few vertices and indices
+            if !vertices.is_empty() {
+                println!("First 3 vertices:");
+                for i in 0..vertices.len().min(3) {
+                    println!("  v{}: pos({:.2}, {:.2}, {:.2})", i, vertices[i].position[0], vertices[i].position[1], vertices[i].position[2]);
+                }
+            }
+            if !indices.is_empty() {
+                println!("First 9 indices (3 triangles):");
+                for i in 0..indices.len().min(9) {
+                    print!("{} ", indices[i]);
+                }
+                println!();
+            }
 
             self.vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
@@ -461,6 +506,7 @@ impl Renderer {
             });
 
             self.num_indices = indices.len() as u32;
+            println!("Updated num_indices to: {}", self.num_indices);
         }
     }
 
