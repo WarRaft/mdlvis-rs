@@ -1,0 +1,24 @@
+Аккуратно со сносками: они часто переносятся на след. строку!
+[LITE]:
+KLAS - AttenuationStart
+KLAE - AttenuationEnd
+KLAI - Intensity
+[PREM:]
+KPEE - EmisionRate
+KPEG - Gravity
+KPLN - Longitude
+KPLT - Latitude
+KPEL - LifeSpan
+KPES - InitVelocity
+(KPEV - Vis.)
+[PRE2]:
+KP2R - Variation
+KP2G - Gravity
+Там, где указано bitXX - ошибка. Бит в скобках - озн., что всегда уст.
+[RIBB]:
+Где long <0> - это TextureSlot
+KRHA - HeightAbove
+KRAL - Alpha
+KRCO - Цвет
+KRVS - Visibility (а вовсе не Speed)
+TextureSlot - странности со static (не созд. контроллер)
