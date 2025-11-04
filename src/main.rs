@@ -10,7 +10,6 @@ mod app;
 mod material_system;
 mod model;
 mod parser;
-mod pipeline_system;
 mod renderer;
 mod settings;
 mod texture_loader;
@@ -28,22 +27,27 @@ impl ApplicationHandler for AppHandler {
             let window_attrs = Window::default_attributes()
                 .with_title("MDLVis-RS - Warcraft 3 Model Viewer")
                 .with_inner_size(winit::dpi::LogicalSize::new(1200.0, 800.0));
-            
+
             let window = event_loop.create_window(window_attrs).unwrap();
             let mut app = self.rt.block_on(app::App::new(Arc::new(window))).unwrap();
-            
+
             // Load model if provided as command line argument
             if let Some(path) = &self.model_path {
                 if let Err(e) = self.rt.block_on(app.load_model(path)) {
                     eprintln!("Failed to load model '{}': {}", path, e);
                 }
             }
-            
+
             self.app = Some(app);
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
         if let Some(app) = &mut self.app {
             let response = app.handle_event(&event);
             if response.repaint {
@@ -78,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    
+
     let mut handler = AppHandler {
         app: None,
         model_path,
