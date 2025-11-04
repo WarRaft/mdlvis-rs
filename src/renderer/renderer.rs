@@ -34,7 +34,6 @@ pub struct Renderer {
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     texture_bind_groups: Vec<wgpu::BindGroup>, // One bind group per texture
-    team_color_bind_group: wgpu::BindGroup,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     // Material uniforms - three bind groups: normal, team color, team glow
     material_buffer_normal: wgpu::Buffer,
@@ -43,12 +42,10 @@ pub struct Renderer {
     material_bind_group_normal: wgpu::BindGroup,
     material_bind_group_team: wgpu::BindGroup,
     material_bind_group_team_glow: wgpu::BindGroup,
-    material_bind_group_layout: wgpu::BindGroupLayout,
     // Store white texture components to create bind groups for missing textures
     white_texture_view: wgpu::TextureView,
     white_texture_sampler: wgpu::Sampler,
     team_color: [f32; 3],
-    team_color_id: u8, // 0-15 for different team colors
     grid_major_color: [f32; 3],
     grid_minor_color: [f32; 3],
     skybox_color: [f32; 3],
@@ -369,24 +366,6 @@ impl Renderer {
                 depth_or_array_layers: 1,
             },
         );
-
-        let team_color_texture_view =
-            team_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let team_color_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Team Color Bind Group"),
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&team_color_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
-                },
-            ],
-        });
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -898,7 +877,6 @@ impl Renderer {
             camera_buffer,
             camera_bind_group,
             texture_bind_groups,
-            team_color_bind_group,
             texture_bind_group_layout,
             material_buffer_normal,
             material_buffer_team,
@@ -906,11 +884,9 @@ impl Renderer {
             material_bind_group_normal,
             material_bind_group_team,
             material_bind_group_team_glow,
-            material_bind_group_layout,
             white_texture_view: diffuse_texture_view,
             white_texture_sampler: diffuse_sampler,
             team_color: [1.0, 0.0, 0.0],               // Red by default
-            team_color_id: 0,                          // Red team color
             grid_major_color: [0.2, 0.2, 0.2],         // Dark gray major grid
             grid_minor_color: [0.4, 0.4, 0.4],         // Light gray minor grid
             skybox_color: [0.3, 0.5, 0.8],             // Light blue skybox
