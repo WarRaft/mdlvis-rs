@@ -193,19 +193,25 @@ fn read_geosets(file: &mut File, model: &mut Model, geos_size: u32) -> Result<()
                     geoset.material_id = Some(material_id as usize);
                     
                     // Skip SelectionGroup
-                    file.read_u32::<LittleEndian>()?;
-                    // Skip Selectable
-                    file.read_u32::<LittleEndian>()?;
-                    // Skip BoundsRadius
-                    file.read_f32::<LittleEndian>()?;
-                    // Skip MinExt (3 floats)
-                    file.read_f32::<LittleEndian>()?;
-                    file.read_f32::<LittleEndian>()?;
-                    file.read_f32::<LittleEndian>()?;
-                    // Skip MaxExt (3 floats)
-                    file.read_f32::<LittleEndian>()?;
-                    file.read_f32::<LittleEndian>()?;
-                    file.read_f32::<LittleEndian>()?;
+                    let _selection_group = file.read_u32::<LittleEndian>()?;
+                    geoset.selection_group = _selection_group as usize;
+                    
+                    // Read Selectable
+                    let selectable = file.read_u32::<LittleEndian>()?;
+                    geoset.unselectable = selectable == 4; // 4 = Unselectable
+                    
+                    // Read BoundsRadius
+                    geoset.bounds_radius = file.read_f32::<LittleEndian>()?;
+                    
+                    // Read MinExt (3 floats)
+                    geoset.minimum_extent[0] = file.read_f32::<LittleEndian>()?;
+                    geoset.minimum_extent[1] = file.read_f32::<LittleEndian>()?;
+                    geoset.minimum_extent[2] = file.read_f32::<LittleEndian>()?;
+                    
+                    // Read MaxExt (3 floats)
+                    geoset.maximum_extent[0] = file.read_f32::<LittleEndian>()?;
+                    geoset.maximum_extent[1] = file.read_f32::<LittleEndian>()?;
+                    geoset.maximum_extent[2] = file.read_f32::<LittleEndian>()?;
                     // Skip nanim and animations array
                     let nanim = file.read_u32::<LittleEndian>()?;
                     file.seek(SeekFrom::Current((nanim * 28) as i64))?; // Each animation is 7 floats

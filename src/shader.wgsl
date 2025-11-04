@@ -75,10 +75,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     // Apply team color blending based on material type
     if (use_team_color > 0.5) {
-        if (filter_mode >= 3.0 && filter_mode <= 4.0) {
-            // Additive/AddAlpha materials (glow effects)
-            // For glow textures, multiply the white glow texture by team color
-            tex_color = vec4<f32>(tex_color.rgb * team_color, tex_color.a);
+        // Check if this is a team glow texture (ReplaceableID=2) by looking at texture content
+        // Team glow textures are white with alpha pattern, so if the texture is mostly white, treat as glow
+        let is_team_glow = dot(tex_color.rgb, vec3<f32>(1.0, 1.0, 1.0)) > 2.5; // Close to white (3.0 = pure white)
+        
+        if (filter_mode >= 3.0 && filter_mode <= 4.0) || is_team_glow {
+            // Additive/AddAlpha materials OR team glow materials (glow effects)
+            // In original: glColor4f(team_color * alpha) modulates the white glow texture
+            // This means: final_color = glow_texture * team_color * alpha
+            // The glow should be almost pure team color, not mixed
+            tex_color = vec4<f32>(team_color * tex_color.a, tex_color.a);
         } else {
             // Standard Porter-Duff OVER compositing for other materials
             // result = src + dst * (1 - src.alpha)

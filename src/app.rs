@@ -16,6 +16,7 @@ pub struct App {
     egui_state: egui_winit::State,
     texture_receiver: mpsc::UnboundedReceiver<(usize, Vec<u8>, u32, u32)>, // (texture_id, rgba_data, width, height)
     texture_sender: mpsc::UnboundedSender<(usize, Vec<u8>, u32, u32)>, // For loading textures
+    settings: crate::settings::Settings,
 }
 
 pub struct EventResponse {
@@ -52,6 +53,9 @@ impl App {
         // Create channel for background texture loading
         let (texture_sender, texture_receiver) = mpsc::unbounded_channel();
 
+        // Load settings
+        let settings = crate::settings::Settings::load();
+
         Ok(Self {
             window,
             ui,
@@ -62,6 +66,7 @@ impl App {
             egui_state,
             texture_receiver,
             texture_sender,
+            settings,
         })
     }
 
@@ -136,14 +141,13 @@ impl App {
         
         // Get camera orientation for axis gizmo
         let (camera_yaw, camera_pitch) = self.renderer.get_camera_orientation();
-        let team_color = self.renderer.get_team_color();
         
         let mut reset_camera = false;
-        let mut new_team_color: Option<[f32; 3]> = None;
         let mut panel_width = 0.0;
         let mut show_geosets: Vec<bool> = Vec::new();
+        let mut colors_changed = false;
         let full_output = egui_ctx.run(raw_input, |ctx| {
-            (reset_camera, new_team_color, panel_width, show_geosets) = self.ui.show(ctx, &self.model, camera_yaw, camera_pitch, team_color);
+            (reset_camera, panel_width, show_geosets, colors_changed) = self.ui.show(ctx, &self.model, camera_yaw, camera_pitch, &mut self.settings);
         });
         
         // Handle reset camera button
@@ -151,9 +155,9 @@ impl App {
             self.renderer.reset_camera();
         }
         
-        // Handle team color change
-        if let Some(color) = new_team_color {
-            self.renderer.set_team_color(color);
+        // Update renderer colors if they changed
+        if colors_changed {
+            self.renderer.update_colors(&self.settings, self.model.as_ref());
         }
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
@@ -165,12 +169,13 @@ impl App {
             pixels_per_point: self.window.scale_factor() as f32,
         };
 
-        let show_skeleton = self.ui.settings.show_skeleton;
-        let show_grid = self.ui.settings.show_grid;
-        let wireframe_mode = self.ui.settings.wireframe_mode;
-        let far_plane = self.ui.settings.far_plane;
+        let show_skeleton = self.settings.show_skeleton;
+        let show_grid = self.settings.show_grid;
+        let show_bounding_box = self.settings.show_bounding_box;
+        let wireframe_mode = self.settings.wireframe_mode;
+        let far_plane = self.settings.far_plane;
 
-        self.renderer.render(show_skeleton, show_grid, wireframe_mode, far_plane, panel_width, &show_geosets, paint_jobs, full_output.textures_delta, screen_descriptor)
+        self.renderer.render(show_skeleton, show_grid, show_bounding_box, wireframe_mode, far_plane, panel_width, &show_geosets, paint_jobs, full_output.textures_delta, screen_descriptor)
     }
 
     pub async fn load_model(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {

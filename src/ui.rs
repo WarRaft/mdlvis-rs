@@ -6,7 +6,6 @@ pub struct Ui {
     selected_sequence: usize,
     animation_time: f32,
     is_playing: bool,
-    pub settings: Settings,
 }
 
 impl Ui {
@@ -16,7 +15,6 @@ impl Ui {
             selected_sequence: 0,
             animation_time: 0.0,
             is_playing: false,
-            settings: Settings::load(),
         }
     }
 
@@ -26,18 +24,17 @@ impl Ui {
         model: &Option<Model>,
         camera_yaw: f32,
         camera_pitch: f32,
-        team_color: [f32; 3],
-    ) -> (bool, Option<[f32; 3]>, f32, Vec<bool>) {
+        settings: &mut Settings,
+    ) -> (bool, f32, Vec<bool>, bool) {
         let mut reset_camera = false;
-        let mut new_team_color: Option<[f32; 3]> = None;
+        let mut colors_changed = false;
 
         // Draw left panel first to establish layout
         let panel_response = egui::SidePanel::left("left_panel")
             .default_width(250.0)
             .resizable(true)
             .show(ctx, |ui| {
-                self.show_settings(ui, &mut reset_camera);
-                self.show_team_color(ui, team_color, &mut new_team_color);
+                colors_changed = self.show_settings(ui, settings, &mut reset_camera);
                 self.show_model_info(ui, model);
                 self.show_geosets(ui, model);
                 self.show_textures(ui, model);
@@ -127,44 +124,33 @@ impl Ui {
 
         (
             reset_camera,
-            new_team_color,
             panel_width,
             self.show_geosets.clone(),
+            colors_changed,
         )
     }
 
-    fn show_settings(&mut self, ui: &mut egui::Ui, reset_camera: &mut bool) {
-        ui.collapsing("Render Settings", |ui| {
-            if ui
-                .checkbox(&mut self.settings.show_skeleton, "Show Skeleton")
-                .changed()
-            {
-                self.settings.save();
-            }
-            if ui
-                .checkbox(&mut self.settings.wireframe_mode, "Wireframe Mode")
-                .changed()
-            {
-                self.settings.save();
-            }
-            if ui
-                .checkbox(&mut self.settings.show_grid, "Show Grid")
-                .changed()
-            {
-                self.settings.save();
-            }
+    fn show_settings(&mut self, ui: &mut egui::Ui, settings: &mut Settings, reset_camera: &mut bool) -> bool {
+        ui.collapsing("Display Settings", |ui| {
+            let mut changed = false;
+            
+            changed |= ui.checkbox(&mut settings.show_skeleton, "Show Skeleton").changed();
+            changed |= ui.checkbox(&mut settings.wireframe_mode, "Wireframe Mode").changed();
+            changed |= ui.checkbox(&mut settings.show_grid, "Show Grid").changed();
+            changed |= ui.checkbox(&mut settings.show_bounding_box, "Show Bounding Box").changed();
 
             ui.separator();
             ui.label("Far Plane (View Distance):");
-            if ui
+            changed |= ui
                 .add(
-                    egui::Slider::new(&mut self.settings.far_plane, 100.0..=5000.0)
+                    egui::Slider::new(&mut settings.far_plane, 100.0..=5000.0)
                         .suffix(" units")
                         .logarithmic(true),
                 )
-                .changed()
-            {
-                self.settings.save();
+                .changed();
+
+            if changed {
+                settings.save();
             }
 
             ui.separator();
@@ -173,21 +159,49 @@ impl Ui {
                 *reset_camera = true;
             }
         });
-    }
-
-    fn show_team_color(
-        &mut self,
-        ui: &mut egui::Ui,
-        team_color: [f32; 3],
-        new_team_color: &mut Option<[f32; 3]>,
-    ) {
-        ui.collapsing("Team Color", |ui| {
-            let mut color = team_color;
-            if ui.color_edit_button_rgb(&mut color).changed() {
-                *new_team_color = Some(color);
+        
+        // Colors tab
+        let mut colors_changed = false;
+        ui.collapsing("Colors", |ui| {
+            let mut changed = false;
+            
+            ui.label("Team Color:");
+            changed |= ui.color_edit_button_rgb(&mut settings.team_color).changed();
+            
+            ui.label("Skybox Color:");
+            changed |= ui.color_edit_button_rgb(&mut settings.skybox_color).changed();
+            
+            ui.label("Grid Major Lines:");
+            changed |= ui.color_edit_button_rgb(&mut settings.grid_major_color).changed();
+            
+            ui.label("Grid Minor Lines:");
+            changed |= ui.color_edit_button_rgb(&mut settings.grid_minor_color).changed();
+            
+            ui.label("Bounding Box Color:");
+            changed |= ui.color_edit_button_rgb(&mut settings.bounding_box_color).changed();
+            
+            ui.separator();
+            
+            if ui.button("Reset Colors to Default").clicked() {
+                let default_settings = Settings::default();
+                settings.team_color = default_settings.team_color;
+                settings.skybox_color = default_settings.skybox_color;
+                settings.grid_major_color = default_settings.grid_major_color;
+                settings.grid_minor_color = default_settings.grid_minor_color;
+                settings.bounding_box_color = default_settings.bounding_box_color;
+                changed = true;
+            }
+            
+            if changed {
+                settings.save();
+                colors_changed = true;
             }
         });
+        
+        colors_changed
     }
+
+
 
     fn show_model_info(&mut self, ui: &mut egui::Ui, model: &Option<Model>) {
         if let Some(model) = model {

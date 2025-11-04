@@ -82,6 +82,8 @@ pub struct Renderer {
     wireframe_pipeline: wgpu::RenderPipeline,
     transparent_pipeline: wgpu::RenderPipeline,
     wireframe_transparent_pipeline: wgpu::RenderPipeline,
+    additive_pipeline: wgpu::RenderPipeline,
+    wireframe_additive_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -93,6 +95,8 @@ pub struct Renderer {
     num_lines: u32,
     skeleton_vertex_buffer: wgpu::Buffer,
     num_skeleton_lines: u32,
+    bounding_box_vertex_buffer: wgpu::Buffer,
+    num_bounding_box_lines: u32,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     texture_bind_groups: Vec<wgpu::BindGroup>, // One bind group per texture
@@ -109,6 +113,9 @@ pub struct Renderer {
     white_texture_sampler: wgpu::Sampler,
     team_color: [f32; 3],
     team_color_id: u8, // 0-15 for different team colors
+    grid_major_color: [f32; 3],
+    grid_minor_color: [f32; 3],
+    skybox_color: [f32; 3], 
     camera_yaw: f32,
     camera_pitch: f32,
     camera_distance: f32,
@@ -606,6 +613,118 @@ impl Renderer {
             cache: None,
         });
 
+        // Create additive rendering pipeline (GL_ONE, GL_ONE) for glow effects
+        let additive_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Additive Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::desc()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false, // Don't write depth for additive materials
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        // Create wireframe additive rendering pipeline
+        let wireframe_additive_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Wireframe Additive Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::desc()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Line, // Wireframe mode!
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         // Create line rendering pipeline
         let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Line Pipeline"),
@@ -706,6 +825,14 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
+        // Create empty bounding box buffer initially
+        let bounding_box_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Bounding Box Vertex Buffer"),
+            size: 0,
+            usage: wgpu::BufferUsages::VERTEX,
+            mapped_at_creation: false,
+        });
+
         // Initialize egui
         let egui_ctx = egui::Context::default();
         let egui_renderer = egui_wgpu::Renderer::new(
@@ -723,6 +850,8 @@ impl Renderer {
             wireframe_pipeline,
             transparent_pipeline,
             wireframe_transparent_pipeline,
+            additive_pipeline,
+            wireframe_additive_pipeline,
             line_pipeline,
             vertex_buffer,
             index_buffer,
@@ -734,6 +863,8 @@ impl Renderer {
             num_lines,
             skeleton_vertex_buffer,
             num_skeleton_lines: 0,
+            bounding_box_vertex_buffer,
+            num_bounding_box_lines: 0,
             camera_buffer,
             camera_bind_group,
             texture_bind_groups,
@@ -748,6 +879,9 @@ impl Renderer {
             white_texture_sampler: diffuse_sampler,
             team_color: [1.0, 0.0, 0.0], // Red by default
             team_color_id: 0, // Red team color
+            grid_major_color: [0.2, 0.2, 0.2], // Dark gray major grid
+            grid_minor_color: [0.4, 0.4, 0.4], // Light gray minor grid
+            skybox_color: [0.3, 0.5, 0.8], // Light blue skybox
             camera_yaw: 0.0, // 0 degrees - front view
             camera_pitch: std::f32::consts::PI * 0.15, // 27 degrees - look slightly down at model
             camera_distance: 200.0,
@@ -773,7 +907,7 @@ impl Renderer {
         self.egui_ctx.clone()
     }
 
-    pub fn render(&mut self, show_skeleton: bool, show_grid: bool, wireframe_mode: bool, far_plane: f32, panel_width: f32, show_geosets: &Vec<bool>, _paint_jobs: Vec<egui::ClippedPrimitive>, _textures_delta: egui::TexturesDelta, _screen_descriptor: ScreenDescriptor) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, show_skeleton: bool, show_grid: bool, show_bounding_box: bool, wireframe_mode: bool, far_plane: f32, panel_width: f32, show_geosets: &Vec<bool>, _paint_jobs: Vec<egui::ClippedPrimitive>, _textures_delta: egui::TexturesDelta, _screen_descriptor: ScreenDescriptor) -> Result<(), wgpu::SurfaceError> {
         // Calculate viewport dimensions (excluding left panel)
         let panel_width_pixels = (panel_width * _screen_descriptor.pixels_per_point) as f32;
         let viewport_width = self.config.width as f32 - panel_width_pixels;
@@ -851,9 +985,9 @@ impl Renderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.6,
-                            g: 0.7,
-                            b: 0.85,
+                            r: self.skybox_color[0] as f64,
+                            g: self.skybox_color[1] as f64,
+                            b: self.skybox_color[2] as f64,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -903,6 +1037,20 @@ impl Renderer {
                 render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
                 
+                // Helper function to check if material uses team glow (ReplaceableID=2)
+                let is_team_glow_material = |mat_id: usize| -> bool {
+                    if mat_id < self.materials.len() {
+                        if let Some(layer) = self.materials[mat_id].layers.first() {
+                            if let Some(tex_id) = layer.texture_id {
+                                if tex_id < self.textures.len() {
+                                    return self.textures[tex_id].replaceable_id == 2;
+                                }
+                            }
+                        }
+                    }
+                    false
+                };
+
                 // Helper closure to render a geoset
                 let render_geoset = |render_pass: &mut wgpu::RenderPass, geoset: &GeosetRenderInfo| {
                     // Determine texture, material bind group, and material type
@@ -981,7 +1129,7 @@ impl Renderer {
                     }
                 }
                 
-                // PASS 2: Render transparent materials with depth test but no depth write
+                // PASS 2: Render transparent materials (blend mode: SRC_ALPHA, ONE_MINUS_SRC_ALPHA)
                 let transparent_pipeline = if wireframe_mode {
                     &self.wireframe_transparent_pipeline
                 } else {
@@ -999,8 +1147,39 @@ impl Renderer {
                         if mat_id < self.materials.len() {
                             let material = &self.materials[mat_id];
                             if let Some(layer) = material.layers.first() {
-                                // Render all non-opaque materials in second pass
-                                if layer.filter_mode != crate::model::FilterMode::Opaque {
+                                // Render transparent and blend materials in second pass, but exclude team glow
+                                if (layer.filter_mode == crate::model::FilterMode::Transparent ||
+                                   layer.filter_mode == crate::model::FilterMode::Blend) &&
+                                   !is_team_glow_material(mat_id) {
+                                    render_geoset(&mut render_pass, geoset);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // PASS 3: Render additive materials (blend mode: ONE, ONE)
+                let additive_pipeline = if wireframe_mode {
+                    &self.wireframe_additive_pipeline
+                } else {
+                    &self.additive_pipeline
+                };
+                render_pass.set_pipeline(additive_pipeline);
+                
+                for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
+                    // Skip if geoset is hidden via UI
+                    if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
+                        continue;
+                    }
+                    
+                    if let Some(mat_id) = geoset.material_id {
+                        if mat_id < self.materials.len() {
+                            let material = &self.materials[mat_id];
+                            if let Some(layer) = material.layers.first() {
+                                // Render additive materials OR team glow materials in third pass
+                                if layer.filter_mode == crate::model::FilterMode::Additive ||
+                                   layer.filter_mode == crate::model::FilterMode::AddAlpha ||
+                                   is_team_glow_material(mat_id) {
                                     render_geoset(&mut render_pass, geoset);
                                 }
                             }
@@ -1015,6 +1194,14 @@ impl Renderer {
                 render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, self.skeleton_vertex_buffer.slice(..));
                 render_pass.draw(0..(self.num_skeleton_lines * 2), 0..1);
+            }
+            
+            // Draw bounding boxes
+            if show_bounding_box && self.num_bounding_box_lines > 0 {
+                render_pass.set_pipeline(&self.line_pipeline);
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.bounding_box_vertex_buffer.slice(..));
+                render_pass.draw(0..(self.num_bounding_box_lines * 2), 0..1);
             }
         }
 
@@ -1233,6 +1420,100 @@ impl Renderer {
         } else {
             self.num_skeleton_lines = 0;
         }
+
+        // Generate bounding box lines from geosets
+        self.generate_bounding_box_lines(model);
+    }
+
+    /// Generate bounding box lines from all geosets
+    fn generate_bounding_box_lines(&mut self, model: &crate::model::Model) {
+        let bbox_color = [1.0, 1.0, 0.0]; // Yellow for bounding box - will be updated from settings
+        self.generate_bounding_box_lines_with_color(model, bbox_color);
+    }
+    
+    fn generate_bounding_box_lines_with_color(&mut self, model: &crate::model::Model, bbox_color: [f32; 3]) {
+        let mut bbox_vertices = Vec::new();
+        
+        // Calculate overall model bounding box
+        let mut overall_min = [f32::INFINITY, f32::INFINITY, f32::INFINITY];
+        let mut overall_max = [f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+        let mut has_valid_bbox = false;
+        
+        for geoset in &model.geosets {
+            let min = geoset.minimum_extent;
+            let max = geoset.maximum_extent;
+            
+            // Skip if bounding box is invalid
+            if min[0] >= max[0] || min[1] >= max[1] || min[2] >= max[2] {
+                continue;
+            }
+            
+            // Update overall bounds
+            for i in 0..3 {
+                overall_min[i] = overall_min[i].min(min[i]);
+                overall_max[i] = overall_max[i].max(max[i]);
+            }
+            has_valid_bbox = true;
+        }
+        
+        if has_valid_bbox {
+            // Create wireframe cube for the overall model bounding box
+            let vertices = [
+                // Bottom face (Z = min[2])
+                [overall_min[0], overall_min[1], overall_min[2]], // 0: min corner
+                [overall_max[0], overall_min[1], overall_min[2]], // 1: +X
+                [overall_max[0], overall_max[1], overall_min[2]], // 2: +X+Y  
+                [overall_min[0], overall_max[1], overall_min[2]], // 3: +Y
+                // Top face (Z = max[2])
+                [overall_min[0], overall_min[1], overall_max[2]], // 4: +Z
+                [overall_max[0], overall_min[1], overall_max[2]], // 5: +X+Z
+                [overall_max[0], overall_max[1], overall_max[2]], // 6: +X+Y+Z (max corner)
+                [overall_min[0], overall_max[1], overall_max[2]], // 7: +Y+Z
+            ];
+            
+            // Bottom face edges
+            for i in 0..4 {
+                let next = (i + 1) % 4;
+                bbox_vertices.push(LineVertex { position: vertices[i], color: bbox_color });
+                bbox_vertices.push(LineVertex { position: vertices[next], color: bbox_color });
+            }
+            
+            // Top face edges  
+            for i in 4..8 {
+                let next = 4 + ((i - 4 + 1) % 4);
+                bbox_vertices.push(LineVertex { position: vertices[i], color: bbox_color });
+                bbox_vertices.push(LineVertex { position: vertices[next], color: bbox_color });
+            }
+            
+            // Vertical edges connecting bottom to top
+            for i in 0..4 {
+                bbox_vertices.push(LineVertex { position: vertices[i], color: bbox_color });
+                bbox_vertices.push(LineVertex { position: vertices[i + 4], color: bbox_color });
+            }
+            
+            let box_size = [
+                overall_max[0] - overall_min[0],
+                overall_max[1] - overall_min[1], 
+                overall_max[2] - overall_min[2]
+            ];
+            
+            println!("Model bounding box: min={:?}, max={:?}, size={:?}", 
+                overall_min, overall_max, box_size);
+        }
+        
+        if !bbox_vertices.is_empty() {
+            self.bounding_box_vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Bounding Box Vertex Buffer"), 
+                contents: bytemuck::cast_slice(&bbox_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            self.num_bounding_box_lines = (bbox_vertices.len() / 2) as u32;
+            println!("Generated {} bounding box lines for overall model ({} geosets)", 
+                self.num_bounding_box_lines, model.geosets.len());
+        } else {
+            self.num_bounding_box_lines = 0;
+            println!("No valid bounding boxes found in geosets");
+        }
     }
 
     pub fn rotate_camera(&mut self, delta_x: f32, delta_y: f32) {
@@ -1254,6 +1535,63 @@ impl Renderer {
     
     pub fn get_camera_orientation(&self) -> (f32, f32) {
         (self.camera_yaw, self.camera_pitch)
+    }
+
+    pub fn update_colors(&mut self, settings: &crate::settings::Settings, model: Option<&crate::model::Model>) {
+        // Update team color
+        self.set_team_color(settings.team_color);
+        
+        // Update grid colors
+        self.grid_major_color = settings.grid_major_color;
+        self.grid_minor_color = settings.grid_minor_color;
+        self.regenerate_grid();
+        
+        // Update skybox color
+        self.skybox_color = settings.skybox_color;
+        
+        // Update bounding box color if model is loaded
+        if let Some(model) = model {
+            if settings.show_bounding_box {
+                self.generate_bounding_box_lines_with_color(model, settings.bounding_box_color);
+            }
+        }
+    }
+    
+    /// Regenerate grid with current grid color
+    fn regenerate_grid(&mut self) {
+        let mut line_vertices = Vec::new();
+        
+        // Axes - red X, green Y, blue Z
+        line_vertices.push(LineVertex { position: [0.0, 0.0, 0.0], color: [1.0, 0.0, 0.0] });
+        line_vertices.push(LineVertex { position: [210.0, 0.0, 0.0], color: [1.0, 0.0, 0.0] });
+        line_vertices.push(LineVertex { position: [0.0, 0.0, 0.0], color: [0.0, 1.0, 0.0] });
+        line_vertices.push(LineVertex { position: [0.0, 210.0, 0.0], color: [0.0, 1.0, 0.0] });
+        
+        // Minor grid - XY plane (every 8 units)
+        for i in -32..=32 {
+            let pos = i as f32 * 8.0;
+            line_vertices.push(LineVertex { position: [pos, -256.0, 0.0], color: self.grid_minor_color });
+            line_vertices.push(LineVertex { position: [pos, 256.0, 0.0], color: self.grid_minor_color });
+            line_vertices.push(LineVertex { position: [-256.0, pos, 0.0], color: self.grid_minor_color });
+            line_vertices.push(LineVertex { position: [256.0, pos, 0.0], color: self.grid_minor_color });
+        }
+        
+        // Major grid - XY plane (every 64 units)
+        for i in -4..=4 {
+            let pos = i as f32 * 64.0;
+            line_vertices.push(LineVertex { position: [pos, -256.0, 0.0], color: self.grid_major_color });
+            line_vertices.push(LineVertex { position: [pos, 256.0, 0.0], color: self.grid_major_color });
+            line_vertices.push(LineVertex { position: [-256.0, pos, 0.0], color: self.grid_major_color });
+            line_vertices.push(LineVertex { position: [256.0, pos, 0.0], color: self.grid_major_color });
+        }
+
+        // Update line vertex buffer
+        self.line_vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Line Vertex Buffer"),
+            contents: bytemuck::cast_slice(&line_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        self.num_lines = line_vertices.len() as u32;
     }
 
     pub fn set_team_color(&mut self, color: [f32; 3]) {
