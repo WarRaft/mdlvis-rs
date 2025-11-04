@@ -3,8 +3,8 @@ use winit::window::Window;
 use tokio::sync::mpsc;
 
 use crate::model::Model;
+use crate::renderer::renderer::Renderer;
 use crate::ui::Ui;
-use crate::renderer::Renderer;
 
 pub struct App {
     pub window: Arc<Window>,

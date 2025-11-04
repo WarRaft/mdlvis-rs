@@ -10,10 +10,10 @@ mod app;
 mod material_system;
 mod model;
 mod parser;
-mod renderer;
 mod settings;
 mod texture_loader;
 mod ui;
+mod renderer;
 
 struct AppHandler {
     app: Option<app::App>,

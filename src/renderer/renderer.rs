@@ -1,77 +1,11 @@
 use crate::material_system::MaterialUniform;
 use crate::model::{FilterMode, Model};
+use crate::renderer::geoset_render_info::GeosetRenderInfo;
+use crate::renderer::line_vertex::LineVertex;
+use crate::renderer::vertex::Vertex;
 use egui_wgpu::ScreenDescriptor;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Vertex {
-    position: [f32; 3],
-    normal: [f32; 3],
-    uv: [f32; 2],
-}
-
-impl Vertex {
-    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: (size_of::<[f32; 3]>() * 2) as wgpu::BufferAddress,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-            ],
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct LineVertex {
-    position: [f32; 3],
-    color: [f32; 3],
-}
-
-impl LineVertex {
-    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: size_of::<LineVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-            ],
-        }
-    }
-}
-
-#[derive(Debug)]
-struct GeosetRenderInfo {
-    index_start: u32,
-    index_count: u32,
-    material_id: Option<usize>,
-}
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -205,7 +139,7 @@ impl Renderer {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shader.wgsl").into()),
         });
 
         // Create camera uniform buffer
@@ -1874,101 +1808,6 @@ impl Renderer {
         );
     }
 
-    pub fn get_team_color(&self) -> [f32; 3] {
-        self.team_color
-    }
-
-    /// Project a 3D world position to 2D screen coordinates
-    /// Returns None if behind camera or outside viewport with margin
-    pub fn project_to_screen(&self, world_pos: [f32; 3]) -> Option<[f32; 2]> {
-        let point = nalgebra_glm::vec4(world_pos[0], world_pos[1], world_pos[2], 1.0);
-        let clip_space = self.view_proj_matrix * point;
-
-        // Perspective divide
-        if clip_space.w <= 0.0 {
-            return None; // Behind camera
-        }
-
-        let ndc = nalgebra_glm::vec3(
-            clip_space.x / clip_space.w,
-            clip_space.y / clip_space.w,
-            clip_space.z / clip_space.w,
-        );
-
-        // Check if in NDC bounds (strict check - must be fully on screen)
-        if ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 {
-            return None;
-        }
-
-        // Convert to screen coordinates
-        let screen_x = (ndc.x + 1.0) * 0.5 * self.config.width as f32;
-        let screen_y = (1.0 - ndc.y) * 0.5 * self.config.height as f32; // Flip Y
-
-        Some([screen_x, screen_y])
-    }
-
-    pub fn get_viewport_size(&self) -> [u32; 2] {
-        [self.config.width, self.config.height]
-    }
-
-    /// Get screen positions for axis labels
-    /// Returns (X_pos, Y_pos, Z_pos) or None if off-screen
-    pub fn get_axis_label_positions(
-        &self,
-    ) -> (Option<[f32; 2]>, Option<[f32; 2]>, Option<[f32; 2]>) {
-        // Calculate current view_proj matrix (not using cached one to avoid one-frame lag)
-        let aspect = self.config.width as f32 / self.config.height as f32;
-        let proj = nalgebra_glm::perspective(aspect, 45.0_f32.to_radians(), 0.1, 1000.0);
-
-        let eye = nalgebra_glm::vec3(
-            self.model_center[0]
-                + self.camera_distance * self.camera_yaw.cos() * self.camera_pitch.cos(),
-            self.model_center[1]
-                + self.camera_distance * self.camera_yaw.sin() * self.camera_pitch.cos(),
-            self.model_center[2] + self.camera_distance * self.camera_pitch.sin(),
-        );
-        let center = nalgebra_glm::vec3(
-            self.model_center[0],
-            self.model_center[1],
-            self.model_center[2],
-        );
-        let up = nalgebra_glm::vec3(0.0, 0.0, 1.0);
-        let view = nalgebra_glm::look_at(&eye, &center, &up);
-        let view_proj = proj * view;
-
-        // Project axis endpoints at world origin (0,0,0)
-        let axis_length = 150.0;
-        let x_end = [axis_length, 0.0, 0.0];
-        let y_end = [0.0, axis_length, 0.0];
-        let z_end = [0.0, 0.0, axis_length];
-
-        let project = |world_pos: [f32; 3]| -> Option<[f32; 2]> {
-            let point = nalgebra_glm::vec4(world_pos[0], world_pos[1], world_pos[2], 1.0);
-            let clip_space = view_proj * point;
-
-            if clip_space.w <= 0.0 {
-                return None;
-            }
-
-            let ndc = nalgebra_glm::vec3(
-                clip_space.x / clip_space.w,
-                clip_space.y / clip_space.w,
-                clip_space.z / clip_space.w,
-            );
-
-            if ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 {
-                return None;
-            }
-
-            let screen_x = (ndc.x + 1.0) * 0.5 * self.config.width as f32;
-            let screen_y = (1.0 - ndc.y) * 0.5 * self.config.height as f32;
-
-            Some([screen_x, screen_y])
-        };
-
-        (project(x_end), project(y_end), project(z_end))
-    }
-
     /// Load texture from RGBA data and update or add texture bind group
     pub fn load_texture_from_rgba(
         &mut self,
@@ -2124,71 +1963,5 @@ impl Renderer {
 
         self.load_texture_from_rgba(&rgba_data, 32, 32, texture_id);
         println!("Created team glow texture at index {}", texture_id);
-    }
-
-    /// Load team color texture from RGBA data
-    pub fn load_team_color_texture(&mut self, rgba_data: &[u8], width: u32, height: u32) {
-        let texture_size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Team Color Texture"),
-            size: texture_size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            rgba_data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * width),
-                rows_per_image: Some(height),
-            },
-            texture_size,
-        );
-
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Team Color Sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        // Recreate team color bind group with new texture
-        self.team_color_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Team Color Bind Group"),
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
-
-        println!("Loaded team color texture: {}x{}", width, height);
     }
 }
