@@ -3,6 +3,11 @@ struct CameraUniform {
     view_proj: mat4x4<f32>,
 };
 
+struct MaterialUniform {
+    team_color: vec3<f32>,
+    use_team_color: f32, // 0.0 = use texture, 1.0 = replace with team color, 0.5 = blend
+};
+
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 
@@ -10,6 +15,9 @@ var<uniform> camera: CameraUniform;
 var t_diffuse: texture_2d<f32>;
 @group(1) @binding(1)
 var s_diffuse: sampler;
+
+@group(2) @binding(0)
+var<uniform> material: MaterialUniform;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -43,7 +51,24 @@ fn vs_main(
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample texture
-    let tex_color = textureSample(t_diffuse, s_diffuse, in.uv);
+    var tex_color = textureSample(t_diffuse, s_diffuse, in.uv);
+    
+    // Apply team color if needed
+    if (material.use_team_color > 0.5) {
+        // Standard Porter-Duff OVER compositing:
+        // result = src + dst * (1 - src.alpha)
+        // Where src = texture pixel, dst = team color
+        
+        // Texture OVER team color
+        let src = tex_color.rgb;
+        let src_alpha = tex_color.a;
+        let dst = material.team_color;
+        
+        // result = src + dst * (1 - src_alpha)
+        let final_rgb = src + dst * (1.0 - src_alpha);
+        
+        tex_color = vec4<f32>(final_rgb, 1.0);
+    }
     
     // Simple lighting
     let light_dir = normalize(vec3<f32>(1.0, 1.0, 1.0));

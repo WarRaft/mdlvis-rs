@@ -183,14 +183,32 @@ fn read_geosets(file: &mut File, model: &mut Model, geos_size: u32) -> Result<()
                     file.seek(SeekFrom::Current((count * 4) as i64))?;
                 }
                 b"MATS" => {
+                    // MATS = bone matrices, not material ID!
                     let count = file.read_u32::<LittleEndian>()?;
-                    if count > 0 {
-                        // Read first material ID
-                        let mat_id = file.read_u32::<LittleEndian>()?;
-                        geoset.material_id = Some(mat_id as usize);
-                        // Skip remaining
-                        file.seek(SeekFrom::Current(((count - 1) * 4) as i64))?;
-                    }
+                    // Skip all matrices
+                    file.seek(SeekFrom::Current((count * 4) as i64))?;
+                    
+                    // After MATS comes MaterialID as a plain long field
+                    let material_id = file.read_u32::<LittleEndian>()?;
+                    geoset.material_id = Some(material_id as usize);
+                    
+                    // Skip SelectionGroup
+                    file.read_u32::<LittleEndian>()?;
+                    // Skip Selectable
+                    file.read_u32::<LittleEndian>()?;
+                    // Skip BoundsRadius
+                    file.read_f32::<LittleEndian>()?;
+                    // Skip MinExt (3 floats)
+                    file.read_f32::<LittleEndian>()?;
+                    file.read_f32::<LittleEndian>()?;
+                    file.read_f32::<LittleEndian>()?;
+                    // Skip MaxExt (3 floats)
+                    file.read_f32::<LittleEndian>()?;
+                    file.read_f32::<LittleEndian>()?;
+                    file.read_f32::<LittleEndian>()?;
+                    // Skip nanim and animations array
+                    let nanim = file.read_u32::<LittleEndian>()?;
+                    file.seek(SeekFrom::Current((nanim * 28) as i64))?; // Each animation is 7 floats
                 }
                 b"UVAS" => {
                     let uvas_count = file.read_u32::<LittleEndian>()?;
@@ -458,6 +476,12 @@ fn read_materials(file: &mut File, model: &mut Model, size: u32) -> Result<(), B
             
             // Skip to end of layer (may contain optional track chunks KMTF, KMTA, etc.)
             file.seek(SeekFrom::Start(layer_end))?;
+        }
+        
+        if let Some(layer) = material.layers.first() {
+            if let Some(tex_id) = layer.texture_id {
+                println!("  Material {}: texture_id = {}", model.materials.len(), tex_id);
+            }
         }
         
         model.materials.push(material);

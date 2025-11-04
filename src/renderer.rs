@@ -92,10 +92,20 @@ pub struct Renderer {
     num_skeleton_lines: u32,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    texture_bind_group: wgpu::BindGroup,
+    texture_bind_groups: Vec<wgpu::BindGroup>, // One bind group per texture
     team_color_bind_group: wgpu::BindGroup,
     texture_bind_group_layout: wgpu::BindGroupLayout,
+    // Material uniforms - two bind groups: one for normal rendering, one for team color
+    material_buffer_normal: wgpu::Buffer,
+    material_buffer_team: wgpu::Buffer,
+    material_bind_group_normal: wgpu::BindGroup,
+    material_bind_group_team: wgpu::BindGroup,
+    material_bind_group_layout: wgpu::BindGroupLayout,
+    // Store white texture components to create bind groups for missing textures
+    white_texture_view: wgpu::TextureView,
+    white_texture_sampler: wgpu::Sampler,
     team_color: [f32; 3],
+    team_color_id: u8, // 0-15 for different team colors
     camera_yaw: f32,
     camera_pitch: f32,
     camera_distance: f32,
@@ -210,7 +220,69 @@ impl Renderer {
             }],
         });
 
-        // Create default white 1x1 texture
+        // Create material uniform buffers - one for normal, one for team color
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct MaterialUniform {
+            team_color: [f32; 3],
+            use_team_color: f32,
+        }
+        
+        let material_uniform_normal = MaterialUniform {
+            team_color: [1.0, 1.0, 1.0], // Not used for normal
+            use_team_color: 0.0, // Don't use team color
+        };
+        
+        let material_uniform_team = MaterialUniform {
+            team_color: [1.0, 0.0, 0.0], // Red by default
+            use_team_color: 1.0, // Use team color
+        };
+        
+        let material_buffer_normal = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Material Buffer Normal"),
+            contents: bytemuck::cast_slice(&[material_uniform_normal]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        
+        let material_buffer_team = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Material Buffer Team"),
+            contents: bytemuck::cast_slice(&[material_uniform_team]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        
+        let material_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Material Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        
+        let material_bind_group_normal = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Material Bind Group Normal"),
+            layout: &material_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: material_buffer_normal.as_entire_binding(),
+            }],
+        });
+        
+        let material_bind_group_team = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Material Bind Group Team"),
+            layout: &material_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: material_buffer_team.as_entire_binding(),
+            }],
+        });
+
+        // Create default white 1x1 texture (for non-team-color materials)
         let texture_size = wgpu::Extent3d {
             width: 1,
             height: 1,
@@ -228,7 +300,7 @@ impl Renderer {
             view_formats: &[],
         });
         
-        // Write white pixel data
+        // Write WHITE pixel data (opaque white for normal materials)
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &diffuse_texture,
@@ -236,7 +308,7 @@ impl Renderer {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &[255, 255, 255, 255], // RGBA white
+            &[255, 255, 255, 255], // RGBA white opaque
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4),
@@ -280,8 +352,9 @@ impl Renderer {
             ],
         });
         
-        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Texture Bind Group"),
+        // Create initial bind group for white texture
+        let initial_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("White Texture Bind Group"),
             layout: &texture_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -294,9 +367,12 @@ impl Renderer {
                 },
             ],
         });
+        
+        // Initialize texture bind groups vector with the white texture
+        let texture_bind_groups = vec![initial_bind_group];
 
-        // Create team color texture (red by default)
-        let team_color_data = [255u8, 0, 0, 255]; // RGBA red
+        // Create team color texture (red by default to match team_color value)
+        let team_color_data = [255u8, 0, 0, 255]; // Red - matches team_color: [1.0, 0.0, 0.0]
         let team_color_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Team Color Texture"),
             size: wgpu::Extent3d {
@@ -351,7 +427,7 @@ impl Renderer {
 
         let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&camera_bind_group_layout, &texture_bind_group_layout],
+            bind_group_layouts: &[&camera_bind_group_layout, &texture_bind_group_layout, &material_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -579,10 +655,18 @@ impl Renderer {
             num_skeleton_lines: 0,
             camera_buffer,
             camera_bind_group,
-            texture_bind_group,
+            texture_bind_groups,
             team_color_bind_group,
             texture_bind_group_layout,
+            material_buffer_normal,
+            material_buffer_team,
+            material_bind_group_normal,
+            material_bind_group_team,
+            material_bind_group_layout,
+            white_texture_view: diffuse_texture_view,
+            white_texture_sampler: diffuse_sampler,
             team_color: [1.0, 0.0, 0.0], // Red by default
+            team_color_id: 0, // Red team color
             camera_yaw: 0.0, // 0 degrees - front view
             camera_pitch: std::f32::consts::PI * 0.15, // 27 degrees - look slightly down at model
             camera_distance: 200.0,
@@ -700,37 +784,48 @@ impl Renderer {
                 
                 // Draw each geoset with appropriate texture
                 for geoset in &self.geosets {
-                    // Determine which texture to use
-                    let bind_group = if let Some(mat_id) = geoset.material_id {
+                    // Determine texture and material bind group
+                    let (texture_bind_group, material_bind_group) = if let Some(mat_id) = geoset.material_id {
                         if mat_id < self.materials.len() {
                             let material = &self.materials[mat_id];
                             if let Some(layer) = material.layers.first() {
                                 if let Some(tex_id) = layer.texture_id {
                                     if tex_id < self.textures.len() {
                                         let texture = &self.textures[tex_id];
-                                        // Use team color for replaceable textures
+                                        // For replaceable textures: use loaded texture (if available) + team color bind group
                                         if texture.replaceable_id == 1 || texture.replaceable_id == 2 {
-                                            &self.team_color_bind_group
+                                            // Try to use the actual texture if loaded, otherwise white
+                                            let tex_bg = if tex_id < self.texture_bind_groups.len() {
+                                                &self.texture_bind_groups[tex_id]
+                                            } else {
+                                                &self.texture_bind_groups[0]
+                                            };
+                                            (tex_bg, &self.material_bind_group_team)
+                                        } else if tex_id < self.texture_bind_groups.len() {
+                                            // Use the specific texture + normal material
+                                            (&self.texture_bind_groups[tex_id], &self.material_bind_group_normal)
                                         } else {
-                                            &self.texture_bind_group
+                                            // Fallback
+                                            (&self.texture_bind_groups[0], &self.material_bind_group_normal)
                                         }
                                     } else {
-                                        &self.texture_bind_group
+                                        (&self.texture_bind_groups[0], &self.material_bind_group_normal)
                                     }
                                 } else {
-                                    &self.texture_bind_group
+                                    (&self.texture_bind_groups[0], &self.material_bind_group_normal)
                                 }
                             } else {
-                                &self.texture_bind_group
+                                (&self.texture_bind_groups[0], &self.material_bind_group_normal)
                             }
                         } else {
-                            &self.texture_bind_group
+                            (&self.texture_bind_groups[0], &self.material_bind_group_normal)
                         }
                     } else {
-                        &self.texture_bind_group
+                        (&self.texture_bind_groups[0], &self.material_bind_group_normal)
                     };
                     
-                    render_pass.set_bind_group(1, bind_group, &[]);
+                    render_pass.set_bind_group(1, texture_bind_group, &[]);
+                    render_pass.set_bind_group(2, material_bind_group, &[]);
                     render_pass.draw_indexed(geoset.index_start..(geoset.index_start + geoset.index_count), 0, 0..1);
                 }
             }
@@ -977,84 +1072,32 @@ impl Renderer {
         self.camera_pitch = self.default_camera_pitch;
         self.camera_distance = self.default_camera_distance;
     }
-
-    pub fn get_team_color(&self) -> [f32; 3] {
-        self.team_color
+    
+    pub fn get_camera_orientation(&self) -> (f32, f32) {
+        (self.camera_yaw, self.camera_pitch)
     }
 
     pub fn set_team_color(&mut self, color: [f32; 3]) {
         self.team_color = color;
         
-        // Update team color texture
-        let color_data = [
-            (color[0] * 255.0) as u8,
-            (color[1] * 255.0) as u8,
-            (color[2] * 255.0) as u8,
-            255u8,
-        ];
+        // Update team material buffer
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct MaterialUniform {
+            team_color: [f32; 3],
+            use_team_color: f32,
+        }
         
-        let team_color_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Team Color Texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let material_uniform = MaterialUniform {
+            team_color: color,
+            use_team_color: 1.0,
+        };
+        
+        self.queue.write_buffer(&self.material_buffer_team, 0, bytemuck::cast_slice(&[material_uniform]));
+    }
 
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &team_color_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &color_data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        let team_color_texture_view = team_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        
-        // Get sampler from existing bind group (reuse the same sampler)
-        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        
-        self.team_color_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Team Color Bind Group"),
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&team_color_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
+    pub fn get_team_color(&self) -> [f32; 3] {
+        self.team_color
     }
 
     /// Project a 3D world position to 2D screen coordinates
@@ -1107,11 +1150,11 @@ impl Renderer {
         let view = nalgebra_glm::look_at(&eye, &center, &up);
         let view_proj = proj * view;
         
-        // Project axis endpoints relative to model center
+        // Project axis endpoints at world origin (0,0,0)
         let axis_length = 150.0;
-        let x_end = [self.model_center[0] + axis_length, self.model_center[1], self.model_center[2]];
-        let y_end = [self.model_center[0], self.model_center[1] + axis_length, self.model_center[2]];
-        let z_end = [self.model_center[0], self.model_center[1], self.model_center[2] + axis_length];
+        let x_end = [axis_length, 0.0, 0.0];
+        let y_end = [0.0, axis_length, 0.0];
+        let z_end = [0.0, 0.0, axis_length];
         
         let project = |world_pos: [f32; 3]| -> Option<[f32; 2]> {
             let point = nalgebra_glm::vec4(world_pos[0], world_pos[1], world_pos[2], 1.0);
@@ -1144,8 +1187,8 @@ impl Renderer {
         )
     }
     
-    /// Load texture from RGBA data and update texture bind group
-    pub fn load_texture_from_rgba(&mut self, rgba_data: &[u8], width: u32, height: u32) {
+    /// Load texture from RGBA data and update or add texture bind group
+    pub fn load_texture_from_rgba(&mut self, rgba_data: &[u8], width: u32, height: u32, texture_id: usize) {
         let texture_size = wgpu::Extent3d {
             width,
             height,
@@ -1191,8 +1234,8 @@ impl Renderer {
             ..Default::default()
         });
         
-        // Recreate texture bind group with new texture
-        self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        // Create new bind group for this texture
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Texture Bind Group"),
             layout: &self.texture_bind_group_layout,
             entries: &[
@@ -1207,6 +1250,131 @@ impl Renderer {
             ],
         });
         
-        println!("Loaded texture: {}x{}", width, height);
+        // Ensure the vector is large enough
+        while self.texture_bind_groups.len() <= texture_id {
+            // Fill gaps with white texture bind groups
+            let white_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("White Texture Bind Group (Gap Filler)"),
+                layout: &self.texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.white_texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.white_texture_sampler),
+                    },
+                ],
+            });
+            self.texture_bind_groups.push(white_bind_group);
+        }
+        
+        // Update the bind group for this texture ID
+        self.texture_bind_groups[texture_id] = bind_group;
+        
+        println!("Loaded texture {} ({}x{})", texture_id, width, height);
+    }
+    
+    /// Create team glow texture (32x32 with alpha map from WC3)
+    pub fn create_team_glow_texture(&mut self, texture_id: usize) {
+        // Team glow alpha map from WC3 (32x32) - from delphi/glow.pas
+        const TEAM_GLOW_ALPHA: [u8; 1024] = [
+            1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+            1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,2,2,2,2,3,3,3,3,3,3,3,2,2,2,1,1,1,1,0,0,0,0,0,1,
+            1,1,1,1,1,1,1,1,1,2,2,3,4,5,6,6,6,6,5,4,3,2,2,1,2,2,1,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,3,4,6,7,9,9,10,9,8,7,5,3,2,1,3,2,2,1,0,0,0,0,
+            1,1,1,1,1,1,1,1,3,4,6,8,10,13,14,15,17,16,15,12,10,7,6,5,4,3,2,1,0,0,0,0,1,1,1,1,1,1,1,1,7,8,10,13,16,18,20,22,24,23,21,18,15,12,10,9,4,3,2,1,0,0,0,0,
+            0,0,1,1,0,1,3,4,5,9,15,20,25,30,35,38,38,36,34,31,26,20,13,9,9,6,2,1,0,1,1,0,0,0,1,1,0,1,3,5,10,15,21,28,35,41,47,50,51,49,46,41,36,28,20,15,10,7,3,1,0,1,1,0,
+            0,0,1,1,1,2,4,7,15,20,28,38,47,55,62,67,69,67,62,56,47,37,28,21,12,9,4,1,1,1,1,0,0,0,1,1,1,3,6,9,16,23,33,45,57,68,78,83,87,83,77,69,58,45,33,25,15,11,6,2,1,1,1,0,
+            0,0,1,1,1,4,8,11,19,27,39,53,67,81,92,99,103,99,91,81,68,53,39,30,18,13,7,3,1,1,1,1,0,0,1,0,1,5,9,13,24,32,46,61,77,92,105,112,116,112,104,93,78,61,45,35,20,16,9,4,1,1,1,1,
+            0,0,0,0,2,5,11,14,27,36,50,67,84,100,113,120,124,120,112,100,84,66,49,39,23,17,10,4,1,1,1,1,0,0,0,0,2,6,11,15,28,36,51,68,85,102,115,123,127,122,114,102,86,67,50,40,24,18,11,4,1,1,1,1,
+            1,1,1,1,2,5,11,15,25,36,51,67,82,97,112,121,123,118,110,98,83,66,49,39,22,17,10,4,2,1,0,0,1,1,1,1,2,5,10,14,24,34,48,63,77,90,104,113,116,111,103,92,78,61,46,36,20,16,9,4,1,1,0,0,
+            1,1,1,1,1,4,9,12,22,30,43,56,68,80,92,99,104,99,92,82,69,54,39,30,18,14,8,3,1,1,0,0,1,1,1,1,1,3,7,10,18,25,35,47,58,69,78,84,88,84,78,69,58,45,33,25,16,12,6,3,1,1,0,0,
+            0,1,1,1,1,2,5,8,13,18,27,37,47,56,64,68,70,67,62,55,47,37,26,20,12,9,5,2,1,1,0,0,0,1,1,1,0,1,4,6,9,13,19,27,36,43,48,51,52,50,46,41,35,28,20,14,10,7,3,1,1,1,0,0,
+            0,1,1,1,0,1,3,4,7,9,13,19,25,30,33,34,36,34,32,29,25,20,14,9,8,5,2,1,1,1,0,0,0,1,1,1,0,0,2,4,6,7,9,13,18,21,23,23,27,25,23,21,19,15,9,6,6,4,2,0,0,1,0,0,
+            1,1,1,1,1,1,1,1,4,5,6,8,10,12,13,14,16,15,14,12,10,8,7,6,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,3,4,6,7,8,10,10,10,9,8,7,5,4,3,2,1,1,1,1,1,1,1,1,
+            1,1,1,1,1,1,1,1,1,1,2,2,3,4,5,5,5,4,4,3,2,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,2,2,3,3,2,2,2,2,1,1,1,1,1,1,1,1,1,1,
+            1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,1,1,1,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,
+            1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1
+        ];
+        
+        // Create RGBA texture: white color (255,255,255) with varying alpha
+        let mut rgba_data = Vec::with_capacity(32 * 32 * 4);
+        for alpha_byte in &TEAM_GLOW_ALPHA {
+            let alpha = (*alpha_byte as f32 / 127.0 * 255.0) as u8; // Scale 0-127 to 0-255
+            rgba_data.push(255); // R - white
+            rgba_data.push(255); // G - white  
+            rgba_data.push(255); // B - white
+            rgba_data.push(alpha); // A - from map
+        }
+        
+        self.load_texture_from_rgba(&rgba_data, 32, 32, texture_id);
+        println!("Created team glow texture at index {}", texture_id);
+    }
+    
+    /// Load team color texture from RGBA data
+    pub fn load_team_color_texture(&mut self, rgba_data: &[u8], width: u32, height: u32) {
+        let texture_size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Team Color Texture"),
+            size: texture_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            rgba_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            texture_size,
+        );
+        
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Team Color Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        
+        // Recreate team color bind group with new texture
+        self.team_color_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Team Color Bind Group"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+        
+        println!("Loaded team color texture: {}x{}", width, height);
     }
 }

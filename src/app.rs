@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use winit::window::Window;
+use tokio::sync::mpsc;
 
 use crate::model::Model;
 use crate::ui::Ui;
@@ -13,6 +14,7 @@ pub struct App {
     mouse_pressed: bool,
     last_mouse_pos: Option<(f64, f64)>,
     egui_state: egui_winit::State,
+    texture_receiver: mpsc::UnboundedReceiver<(usize, Vec<u8>, u32, u32)>, // (texture_id, rgba_data, width, height)
 }
 
 pub struct EventResponse {
@@ -46,26 +48,66 @@ impl App {
             None,
         );
 
+        // Create channel for background texture loading
+        let (texture_sender, texture_receiver) = mpsc::unbounded_channel();
+
         // Load test model
         let model = match crate::parser::load_mdl("test-data/Arthas.mdx") {
             Ok(model) => {
                 renderer.update_model(&model);
                 
-                // Try to load first non-empty texture asynchronously
-                if let Some(texture) = model.textures.iter().find(|t| !t.filename.is_empty() && t.replaceable_id == 0) {
-                    let texture_path = &texture.filename;
-                    println!("Attempting to load texture: {}", texture_path);
-                    
-                    match crate::texture_loader::load_texture(texture_path).await {
-                        Ok((rgba_data, width, height)) => {
-                            println!("Successfully downloaded and decoded texture: {}x{}", width, height);
-                            renderer.load_texture_from_rgba(&rgba_data, width, height);
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to load texture {}: {}", texture_path, e);
-                            eprintln!("Continuing with default white texture...");
-                        }
+                // For replaceable textures, create appropriate textures
+                for (texture_id, texture) in model.textures.iter().enumerate() {
+                    if texture.replaceable_id == 1 {
+                        // Team color (RID 1) - find first real texture to use
+                        // This will be loaded below in the async loading loop
+                        println!("Texture {} is team color (RID 1) - will load texture", texture_id);
+                    } else if texture.replaceable_id == 2 {
+                        // Team glow (RID 2) - create 32x32 glow texture with alpha map
+                        println!("Creating team glow texture for texture {}", texture_id);
+                        renderer.create_team_glow_texture(texture_id);
                     }
+                }
+                
+                // Start background texture loading tasks
+                for (texture_id, texture) in model.textures.iter().enumerate() {
+                    // Skip team glow (RID 2) - already created above
+                    if texture.replaceable_id == 2 {
+                        continue;
+                    }
+                    
+                    // For replaceable textures (team color RID 1), use first real texture
+                    // For normal textures, use their own filename
+                    let texture_path = if texture.replaceable_id == 1 {
+                        // For team color (RID 1), use first real texture as source
+                        model.textures.iter()
+                            .find(|t| t.replaceable_id == 0 && !t.filename.is_empty())
+                            .map(|t| t.filename.clone())
+                            .unwrap_or_default()
+                    } else {
+                        // For normal textures, use their own filename
+                        texture.filename.clone()
+                    };
+                    
+                    if texture_path.is_empty() {
+                        continue; // Skip if no texture to load
+                    }
+                    
+                    let sender = texture_sender.clone();
+                    
+                    // Spawn background task
+                    tokio::spawn(async move {
+                        println!("Background loading texture {}: {}", texture_id, texture_path);
+                        match crate::texture_loader::load_texture(&texture_path).await {
+                            Ok((rgba_data, width, height)) => {
+                                println!("Successfully loaded texture {} ({}x{}) in background", texture_id, width, height);
+                                let _ = sender.send((texture_id, rgba_data, width, height));
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to load texture {} ({}): {}", texture_id, texture_path, e);
+                            }
+                        }
+                    });
                 }
                 
                 Some(model)
@@ -84,6 +126,7 @@ impl App {
             mouse_pressed: false,
             last_mouse_pos: None,
             egui_state,
+            texture_receiver,
         })
     }
 
@@ -147,17 +190,23 @@ impl App {
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        // Process any textures that finished loading
+        while let Ok((texture_id, rgba_data, width, height)) = self.texture_receiver.try_recv() {
+            println!("Applying loaded texture {} to renderer", texture_id);
+            self.renderer.load_texture_from_rgba(&rgba_data, width, height, texture_id);
+        }
+        
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let egui_ctx = self.renderer.egui_context();
         
-        // Get axis label positions before UI render (uses previous frame's matrix)
-        let axis_labels = self.renderer.get_axis_label_positions();
+        // Get camera orientation for axis gizmo
+        let (camera_yaw, camera_pitch) = self.renderer.get_camera_orientation();
         let team_color = self.renderer.get_team_color();
         
         let mut reset_camera = false;
         let mut new_team_color: Option<[f32; 3]> = None;
         let full_output = egui_ctx.run(raw_input, |ctx| {
-            (reset_camera, new_team_color) = self.ui.show(ctx, &self.model, axis_labels, team_color);
+            (reset_camera, new_team_color) = self.ui.show(ctx, &self.model, camera_yaw, camera_pitch, team_color);
         });
         
         // Handle reset camera button
