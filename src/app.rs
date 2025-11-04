@@ -25,8 +25,7 @@ pub struct EventResponse {
 }
 
 impl App {
-    pub async fn new(window: Window) -> Result<Self, Box<dyn std::error::Error>> {
-        let window = Arc::new(window);
+    pub async fn new(window: Arc<Window>) -> Result<Self, Box<dyn std::error::Error>> {
         // Initialize UI
         let ui = Ui::new();
 
