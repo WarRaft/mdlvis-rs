@@ -5,11 +5,14 @@ use winit::{
 };
 
 mod app;
+mod material_system;
 mod model;
 mod parser;
+mod pipeline_system;
 mod renderer;
 mod settings;
 mod texture_loader;
+mod texture_system;
 mod ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

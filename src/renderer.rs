@@ -1,18 +1,19 @@
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
-use crate::model::Model;
+use crate::model::{Model, FilterMode};
+use crate::material_system::MaterialUniform;
 use egui_wgpu::ScreenDescriptor;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
+pub struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],
     uv: [f32; 2],
 }
 
 impl Vertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
+    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -39,13 +40,13 @@ impl Vertex {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct LineVertex {
+pub struct LineVertex {
     position: [f32; 3],
     color: [f32; 3],
 }
 
 impl LineVertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
+    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<LineVertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -223,25 +224,8 @@ impl Renderer {
         });
 
         // Create material uniform buffers - one for normal, one for team color
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct MaterialUniform {
-            team_color_and_flags: [f32; 4], // team_color.xyz + use_team_color
-            wireframe_and_padding: [f32; 4], // wireframe_mode + padding
-            extra_padding: [f32; 4], // Additional padding for alignment
-        }
-        
-        let material_uniform_normal = MaterialUniform {
-            team_color_and_flags: [1.0, 1.0, 1.0, 0.0], // team_color (not used) + use_team_color = 0.0
-            wireframe_and_padding: [0.0, 0.0, 0.0, 0.0], // wireframe_mode (will be updated) + padding
-            extra_padding: [0.0, 0.0, 0.0, 0.0],
-        };
-        
-        let material_uniform_team = MaterialUniform {
-            team_color_and_flags: [1.0, 0.0, 0.0, 1.0], // team_color (red) + use_team_color = 1.0
-            wireframe_and_padding: [0.0, 0.0, 0.0, 0.0], // wireframe_mode (will be updated) + padding  
-            extra_padding: [0.0, 0.0, 0.0, 0.0],
-        };
+        let material_uniform_normal = MaterialUniform::normal(false, FilterMode::Opaque);
+        let material_uniform_team = MaterialUniform::team_color([1.0, 0.0, 0.0], false, FilterMode::Opaque);
         
         let material_buffer_normal = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Material Buffer Normal"),
@@ -812,31 +796,29 @@ impl Renderer {
         self.view_proj_matrix = view_proj; // Store for axis label projection
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(view_proj.as_slice()));
 
-        // Update material uniforms with wireframe mode
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct MaterialUniform {
-            team_color_and_flags: [f32; 4],
-            wireframe_and_padding: [f32; 4],
-            extra_padding: [f32; 4],
-        }
-        
-        let wireframe_mode_f32 = if wireframe_mode { 1.0 } else { 0.0 };
-        
-        let material_uniform_normal = MaterialUniform {
-            team_color_and_flags: [1.0, 1.0, 1.0, 0.0], // team_color (not used) + use_team_color = 0.0
-            wireframe_and_padding: [wireframe_mode_f32, 0.0, 0.0, 0.0], // wireframe_mode + padding
-            extra_padding: [0.0, 0.0, 0.0, 0.0],
+        // Helper closure to update material uniform for specific geoset
+        let update_material_uniform = |geoset: &GeosetRenderInfo, is_team_color: bool| -> MaterialUniform {
+            let filter_mode = if let Some(mat_id) = geoset.material_id {
+                if mat_id < self.materials.len() {
+                    let material = &self.materials[mat_id];
+                    if let Some(layer) = material.layers.first() {
+                        layer.filter_mode.clone()
+                    } else {
+                        FilterMode::Opaque
+                    }
+                } else {
+                    FilterMode::Opaque
+                }
+            } else {
+                FilterMode::Opaque
+            };
+
+            if is_team_color {
+                MaterialUniform::team_color(self.team_color, wireframe_mode, filter_mode)
+            } else {
+                MaterialUniform::normal(wireframe_mode, filter_mode)
+            }
         };
-        
-        let material_uniform_team = MaterialUniform {
-            team_color_and_flags: [self.team_color[0], self.team_color[1], self.team_color[2], 1.0], // team_color + use_team_color = 1.0
-            wireframe_and_padding: [wireframe_mode_f32, 0.0, 0.0, 0.0], // wireframe_mode + padding
-            extra_padding: [0.0, 0.0, 0.0, 0.0],
-        };
-        
-        self.queue.write_buffer(&self.material_buffer_normal, 0, bytemuck::cast_slice(&[material_uniform_normal]));
-        self.queue.write_buffer(&self.material_buffer_team, 0, bytemuck::cast_slice(&[material_uniform_team]));
 
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -923,45 +905,49 @@ impl Renderer {
                 
                 // Helper closure to render a geoset
                 let render_geoset = |render_pass: &mut wgpu::RenderPass, geoset: &GeosetRenderInfo| {
-                    // Determine texture and material bind group
-                    let (texture_bind_group, material_bind_group) = if let Some(mat_id) = geoset.material_id {
+                    // Determine texture, material bind group, and material type
+                    let (texture_bind_group, is_team_color) = if let Some(mat_id) = geoset.material_id {
                         if mat_id < self.materials.len() {
                             let material = &self.materials[mat_id];
                             if let Some(layer) = material.layers.first() {
                                 if let Some(tex_id) = layer.texture_id {
                                     if tex_id < self.textures.len() {
                                         let texture = &self.textures[tex_id];
-                                        // For replaceable textures: use loaded texture (if available) + team color bind group
+                                        // For replaceable textures: use loaded texture (if available) + team color
                                         if texture.replaceable_id == 1 || texture.replaceable_id == 2 {
-                                            // Try to use the actual texture if loaded, otherwise white
                                             let tex_bg = if tex_id < self.texture_bind_groups.len() {
                                                 &self.texture_bind_groups[tex_id]
                                             } else {
                                                 &self.texture_bind_groups[0]
                                             };
-                                            (tex_bg, &self.material_bind_group_team)
+                                            (tex_bg, true)
                                         } else if tex_id < self.texture_bind_groups.len() {
-                                            // Use the specific texture + normal material
-                                            (&self.texture_bind_groups[tex_id], &self.material_bind_group_normal)
+                                            (&self.texture_bind_groups[tex_id], false)
                                         } else {
-                                            // Fallback
-                                            (&self.texture_bind_groups[0], &self.material_bind_group_normal)
+                                            (&self.texture_bind_groups[0], false)
                                         }
                                     } else {
-                                        (&self.texture_bind_groups[0], &self.material_bind_group_normal)
+                                        (&self.texture_bind_groups[0], false)
                                     }
                                 } else {
-                                    (&self.texture_bind_groups[0], &self.material_bind_group_normal)
+                                    (&self.texture_bind_groups[0], false)
                                 }
                             } else {
-                                (&self.texture_bind_groups[0], &self.material_bind_group_normal)
+                                (&self.texture_bind_groups[0], false)
                             }
                         } else {
-                            (&self.texture_bind_groups[0], &self.material_bind_group_normal)
+                            (&self.texture_bind_groups[0], false)
                         }
                     } else {
-                        (&self.texture_bind_groups[0], &self.material_bind_group_normal)
+                        (&self.texture_bind_groups[0], false)
                     };
+                    
+                    // Update material uniform for this specific geoset
+                    let material_uniform = update_material_uniform(geoset, is_team_color);
+                    let material_buffer = if is_team_color { &self.material_buffer_team } else { &self.material_buffer_normal };
+                    self.queue.write_buffer(material_buffer, 0, bytemuck::cast_slice(&[material_uniform]));
+                    
+                    let material_bind_group = if is_team_color { &self.material_bind_group_team } else { &self.material_bind_group_normal };
                     
                     render_pass.set_bind_group(1, texture_bind_group, &[]);
                     render_pass.set_bind_group(2, material_bind_group, &[]);
@@ -1273,20 +1259,8 @@ impl Renderer {
     pub fn set_team_color(&mut self, color: [f32; 3]) {
         self.team_color = color;
         
-        // Update team material buffer
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct MaterialUniform {
-            team_color_and_flags: [f32; 4],
-            wireframe_and_padding: [f32; 4],
-            extra_padding: [f32; 4],
-        }
-        
-        let material_uniform = MaterialUniform {
-            team_color_and_flags: [color[0], color[1], color[2], 1.0], // team_color + use_team_color = 1.0
-            wireframe_and_padding: [0.0, 0.0, 0.0, 0.0], // wireframe_mode (normal) + padding
-            extra_padding: [0.0, 0.0, 0.0, 0.0],
-        };
+        // Update team material buffer - use default values since actual material type will be set during rendering
+        let material_uniform = MaterialUniform::team_color(color, false, FilterMode::Opaque);
         
         self.queue.write_buffer(&self.material_buffer_team, 0, bytemuck::cast_slice(&[material_uniform]));
     }
