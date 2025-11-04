@@ -20,13 +20,14 @@ impl Ui {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, model: &Option<Model>, camera_yaw: f32, camera_pitch: f32, team_color: [f32; 3]) -> (bool, Option<[f32; 3]>) {
+    pub fn show(&mut self, ctx: &egui::Context, model: &Option<Model>, camera_yaw: f32, camera_pitch: f32, team_color: [f32; 3]) -> (bool, Option<[f32; 3]>, f32, Vec<bool>) {
         let mut reset_camera = false;
         let mut new_team_color: Option<[f32; 3]> = None;
         
         // Draw left panel first to establish layout
         let panel_response = egui::SidePanel::left("left_panel")
             .default_width(250.0)
+            .resizable(true)
             .show(ctx, |ui| {
                 ui.heading("MDLVis-RS");
                 ui.separator();
@@ -37,6 +38,9 @@ impl Ui {
                 self.show_textures(ui, model);
                 self.show_animation(ui, model);
             });
+        
+        // Get panel width for viewport adjustment
+        let panel_width = panel_response.response.rect.width();
         
         // Draw axis gizmo in bottom-right corner
         let gizmo_size = 80.0;
@@ -99,7 +103,7 @@ impl Ui {
             }
         }
         
-        (reset_camera, new_team_color)
+        (reset_camera, new_team_color, panel_width, self.show_geosets.clone())
     }
     
     fn show_settings(&mut self, ui: &mut egui::Ui, reset_camera: &mut bool) {
@@ -208,10 +212,20 @@ impl Ui {
                                 ui.horizontal(|ui| {
                                     ui.label(format!("#{}", i));
                                     
-                                    if texture.replaceable_id > 0 {
+                                    if texture.replaceable_id == 1 {
+                                        ui.colored_label(
+                                            egui::Color32::from_rgb(255, 100, 100),
+                                            "Team Color"
+                                        );
+                                    } else if texture.replaceable_id == 2 {
+                                        ui.colored_label(
+                                            egui::Color32::from_rgb(255, 150, 150),
+                                            "Team Glow"
+                                        );
+                                    } else if texture.replaceable_id > 0 {
                                         ui.colored_label(
                                             egui::Color32::from_rgb(255, 180, 100),
-                                            format!("Team Color {}", texture.replaceable_id)
+                                            format!("Replaceable ID {}", texture.replaceable_id)
                                         );
                                     } else if !texture.filename.is_empty() {
                                         ui.label(&texture.filename);

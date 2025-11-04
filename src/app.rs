@@ -205,8 +205,10 @@ impl App {
         
         let mut reset_camera = false;
         let mut new_team_color: Option<[f32; 3]> = None;
+        let mut panel_width = 0.0;
+        let mut show_geosets: Vec<bool> = Vec::new();
         let full_output = egui_ctx.run(raw_input, |ctx| {
-            (reset_camera, new_team_color) = self.ui.show(ctx, &self.model, camera_yaw, camera_pitch, team_color);
+            (reset_camera, new_team_color, panel_width, show_geosets) = self.ui.show(ctx, &self.model, camera_yaw, camera_pitch, team_color);
         });
         
         // Handle reset camera button
@@ -233,6 +235,6 @@ impl App {
         let wireframe_mode = self.ui.settings.wireframe_mode;
         let far_plane = self.ui.settings.far_plane;
 
-        self.renderer.render(show_skeleton, show_grid, wireframe_mode, far_plane, paint_jobs, full_output.textures_delta, screen_descriptor)
+        self.renderer.render(show_skeleton, show_grid, wireframe_mode, far_plane, panel_width, &show_geosets, paint_jobs, full_output.textures_delta, screen_descriptor)
     }
 }

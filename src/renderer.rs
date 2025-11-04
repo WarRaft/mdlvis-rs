@@ -79,6 +79,7 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     render_pipeline: wgpu::RenderPipeline,
     wireframe_pipeline: wgpu::RenderPipeline,
+    transparent_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -452,7 +453,7 @@ impl Renderer {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::REPLACE), // Opaque materials replace background
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -497,7 +498,7 @@ impl Renderer {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -527,6 +528,51 @@ impl Renderer {
             cache: None,
         });
 
+        // Create transparent rendering pipeline (depth write OFF, depth test ON)
+        let transparent_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Transparent Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::desc()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false, // Don't write depth for transparent materials
+                depth_compare: wgpu::CompareFunction::Less, // But still test against depth
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         // Create line rendering pipeline
         let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Line Pipeline"),
@@ -542,7 +588,7 @@ impl Renderer {
                 entry_point: Some("fs_line"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -642,6 +688,7 @@ impl Renderer {
             config,
             render_pipeline,
             wireframe_pipeline,
+            transparent_pipeline,
             line_pipeline,
             vertex_buffer,
             index_buffer,
@@ -692,9 +739,14 @@ impl Renderer {
         self.egui_ctx.clone()
     }
 
-    pub fn render(&mut self, show_skeleton: bool, show_grid: bool, wireframe_mode: bool, far_plane: f32, _paint_jobs: Vec<egui::ClippedPrimitive>, _textures_delta: egui::TexturesDelta, _screen_descriptor: ScreenDescriptor) -> Result<(), wgpu::SurfaceError> {
-        // Update camera matrix
-        let aspect = self.config.width as f32 / self.config.height as f32;
+    pub fn render(&mut self, show_skeleton: bool, show_grid: bool, wireframe_mode: bool, far_plane: f32, panel_width: f32, show_geosets: &Vec<bool>, _paint_jobs: Vec<egui::ClippedPrimitive>, _textures_delta: egui::TexturesDelta, _screen_descriptor: ScreenDescriptor) -> Result<(), wgpu::SurfaceError> {
+        // Calculate viewport dimensions (excluding left panel)
+        let panel_width_pixels = (panel_width * _screen_descriptor.pixels_per_point) as f32;
+        let viewport_width = self.config.width as f32 - panel_width_pixels;
+        let viewport_height = self.config.height as f32;
+        
+        // Update camera matrix with correct aspect ratio for viewport
+        let aspect = viewport_width / viewport_height;
         let proj = nalgebra_glm::perspective(aspect, 45.0_f32.to_radians(), 0.1, far_plane);
         
         let eye = nalgebra_glm::vec3(
@@ -762,6 +814,23 @@ impl Renderer {
                 timestamp_writes: None,
             });
 
+            // Set viewport and scissor to render only in area not covered by left panel
+            render_pass.set_viewport(
+                panel_width_pixels,
+                0.0,
+                viewport_width,
+                viewport_height,
+                0.0,
+                1.0,
+            );
+            
+            render_pass.set_scissor_rect(
+                panel_width_pixels as u32,
+                0,
+                viewport_width as u32,
+                viewport_height as u32,
+            );
+
             // Draw axes and grid first
             if show_grid {
                 render_pass.set_pipeline(&self.line_pipeline);
@@ -770,20 +839,14 @@ impl Renderer {
                 render_pass.draw(0..self.num_lines, 0..1);
             }
 
-            // Draw model - each geoset with its own texture
+            // Draw model in two passes: opaque first (with depth write), then transparent (without depth write)
             if self.num_indices > 0 {
-                let pipeline = if wireframe_mode {
-                    &self.wireframe_pipeline
-                } else {
-                    &self.render_pipeline
-                };
-                render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
                 
-                // Draw each geoset with appropriate texture
-                for geoset in &self.geosets {
+                // Helper closure to render a geoset
+                let render_geoset = |render_pass: &mut wgpu::RenderPass, geoset: &GeosetRenderInfo| {
                     // Determine texture and material bind group
                     let (texture_bind_group, material_bind_group) = if let Some(mat_id) = geoset.material_id {
                         if mat_id < self.materials.len() {
@@ -827,6 +890,55 @@ impl Renderer {
                     render_pass.set_bind_group(1, texture_bind_group, &[]);
                     render_pass.set_bind_group(2, material_bind_group, &[]);
                     render_pass.draw_indexed(geoset.index_start..(geoset.index_start + geoset.index_count), 0, 0..1);
+                };
+                
+                // PASS 1: Render opaque materials with depth write enabled
+                let opaque_pipeline = if wireframe_mode {
+                    &self.wireframe_pipeline
+                } else {
+                    &self.render_pipeline
+                };
+                render_pass.set_pipeline(opaque_pipeline);
+                
+                for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
+                    // Skip if geoset is hidden via UI
+                    if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
+                        continue;
+                    }
+                    
+                    if let Some(mat_id) = geoset.material_id {
+                        if mat_id < self.materials.len() {
+                            let material = &self.materials[mat_id];
+                            if let Some(layer) = material.layers.first() {
+                                // Render only opaque materials in first pass
+                                if layer.filter_mode == crate::model::FilterMode::Opaque {
+                                    render_geoset(&mut render_pass, geoset);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // PASS 2: Render transparent materials with depth test but no depth write
+                render_pass.set_pipeline(&self.transparent_pipeline);
+                
+                for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
+                    // Skip if geoset is hidden via UI
+                    if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
+                        continue;
+                    }
+                    
+                    if let Some(mat_id) = geoset.material_id {
+                        if mat_id < self.materials.len() {
+                            let material = &self.materials[mat_id];
+                            if let Some(layer) = material.layers.first() {
+                                // Render all non-opaque materials in second pass
+                                if layer.filter_mode != crate::model::FilterMode::Opaque {
+                                    render_geoset(&mut render_pass, geoset);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             

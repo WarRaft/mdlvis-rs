@@ -71,7 +71,7 @@ pub struct Layer {
     pub alpha: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FilterMode {
     Opaque,
     Transparent,

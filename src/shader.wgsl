@@ -67,7 +67,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // result = src + dst * (1 - src_alpha)
         let final_rgb = src + dst * (1.0 - src_alpha);
         
-        tex_color = vec4<f32>(final_rgb, 1.0);
+        // Preserve original alpha channel
+        tex_color = vec4<f32>(final_rgb, src_alpha);
     }
     
     // Simple lighting
