@@ -20,17 +20,22 @@ impl Ui {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, model: &Option<Model>, camera_yaw: f32, camera_pitch: f32, team_color: [f32; 3]) -> (bool, Option<[f32; 3]>, f32, Vec<bool>) {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        model: &Option<Model>,
+        camera_yaw: f32,
+        camera_pitch: f32,
+        team_color: [f32; 3],
+    ) -> (bool, Option<[f32; 3]>, f32, Vec<bool>) {
         let mut reset_camera = false;
         let mut new_team_color: Option<[f32; 3]> = None;
-        
+
         // Draw left panel first to establish layout
         let panel_response = egui::SidePanel::left("left_panel")
             .default_width(250.0)
             .resizable(true)
             .show(ctx, |ui| {
-                ui.heading("MDLVis-RS");
-                ui.separator();
                 self.show_settings(ui, &mut reset_camera);
                 self.show_team_color(ui, team_color, &mut new_team_color);
                 self.show_model_info(ui, model);
@@ -38,48 +43,59 @@ impl Ui {
                 self.show_textures(ui, model);
                 self.show_animation(ui, model);
             });
-        
+
         // Get panel width for viewport adjustment
         let panel_width = panel_response.response.rect.width();
-        
+
         // Draw axis gizmo in bottom-right corner
         let gizmo_size = 80.0;
         let gizmo_margin = 20.0;
-        
+
         // Get screen size - use available_rect which gives actual rendering area
-        let screen_rect = ctx.screen_rect();
-        
+        let screen_rect = ctx.viewport_rect();
+
         // Calculate bottom-right corner position
         let gizmo_x = screen_rect.max.x - gizmo_size - gizmo_margin;
         let gizmo_y = screen_rect.max.y - gizmo_size - gizmo_margin;
         let center = egui::pos2(gizmo_x + gizmo_size / 2.0, gizmo_y + gizmo_size / 2.0);
         let radius = gizmo_size / 2.5;
-        
+
         // Calculate axis directions based on camera orientation
         let x_angle = -camera_yaw;
         let x_dir = egui::vec2(x_angle.cos(), -x_angle.sin()) * radius;
         let x_end = center + x_dir;
-        
+
         let y_angle = -camera_yaw + std::f32::consts::FRAC_PI_2;
         let y_dir = egui::vec2(y_angle.cos(), -y_angle.sin()) * radius * camera_pitch.cos();
         let y_end = center + y_dir;
-        
+
         let z_dir = egui::vec2(0.0, -camera_pitch.sin() * radius);
         let z_end = center + z_dir;
-        
+
         // Get painter directly from ctx
-        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("axis_gizmo_painter")));
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("axis_gizmo_painter"),
+        ));
         let font_id = egui::FontId::proportional(16.0);
-        
+
         // Draw circle background
-        painter.circle_filled(center, gizmo_size / 2.0, egui::Color32::from_rgba_premultiplied(30, 30, 30, 200));
-        painter.circle_stroke(center, gizmo_size / 2.0, egui::Stroke::new(1.0, egui::Color32::from_gray(100)));
-        
+        painter.circle_filled(
+            center,
+            gizmo_size / 2.0,
+            egui::Color32::from_rgba_premultiplied(30, 30, 30, 200),
+        );
+        painter.circle_stroke(
+            center,
+            gizmo_size / 2.0,
+            egui::Stroke::new(1.0, egui::Color32::from_gray(100)),
+        );
+
         // Calculate depth
         let x_depth = (-camera_yaw).sin();
         let y_depth = (-camera_yaw - std::f32::consts::FRAC_PI_2).sin();
         let z_depth = camera_pitch.sin();
-        
+
         // Sort and draw axes
         let mut axes = vec![
             (x_depth, egui::Color32::from_rgb(255, 80, 80), x_end, "X"),
@@ -87,54 +103,84 @@ impl Ui {
             (z_depth, egui::Color32::from_rgb(100, 150, 255), z_end, "Z"),
         ];
         axes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-        
+
         for (depth, color, end, label) in axes {
             if depth > 0.0 {
                 painter.line_segment([center, end], egui::Stroke::new(3.0, color));
-                painter.text(end, egui::Align2::CENTER_CENTER, label, font_id.clone(), color);
+                painter.text(
+                    end,
+                    egui::Align2::CENTER_CENTER,
+                    label,
+                    font_id.clone(),
+                    color,
+                );
             } else {
                 let darker = egui::Color32::from_rgba_premultiplied(
                     (color.r() as f32 * 0.3) as u8,
                     (color.g() as f32 * 0.3) as u8,
                     (color.b() as f32 * 0.3) as u8,
-                    150
+                    150,
                 );
                 painter.line_segment([center, end], egui::Stroke::new(2.0, darker));
             }
         }
-        
-        (reset_camera, new_team_color, panel_width, self.show_geosets.clone())
+
+        (
+            reset_camera,
+            new_team_color,
+            panel_width,
+            self.show_geosets.clone(),
+        )
     }
-    
+
     fn show_settings(&mut self, ui: &mut egui::Ui, reset_camera: &mut bool) {
         ui.collapsing("Render Settings", |ui| {
-            if ui.checkbox(&mut self.settings.show_skeleton, "Show Skeleton").changed() {
+            if ui
+                .checkbox(&mut self.settings.show_skeleton, "Show Skeleton")
+                .changed()
+            {
                 self.settings.save();
             }
-            if ui.checkbox(&mut self.settings.wireframe_mode, "Wireframe Mode").changed() {
+            if ui
+                .checkbox(&mut self.settings.wireframe_mode, "Wireframe Mode")
+                .changed()
+            {
                 self.settings.save();
             }
-            if ui.checkbox(&mut self.settings.show_grid, "Show Grid").changed() {
+            if ui
+                .checkbox(&mut self.settings.show_grid, "Show Grid")
+                .changed()
+            {
                 self.settings.save();
             }
-            
+
             ui.separator();
             ui.label("Far Plane (View Distance):");
-            if ui.add(egui::Slider::new(&mut self.settings.far_plane, 100.0..=5000.0)
-                .suffix(" units")
-                .logarithmic(true)).changed() {
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.settings.far_plane, 100.0..=5000.0)
+                        .suffix(" units")
+                        .logarithmic(true),
+                )
+                .changed()
+            {
                 self.settings.save();
             }
-            
+
             ui.separator();
-            
+
             if ui.button("Reset Camera").clicked() {
                 *reset_camera = true;
             }
         });
     }
-    
-    fn show_team_color(&mut self, ui: &mut egui::Ui, team_color: [f32; 3], new_team_color: &mut Option<[f32; 3]>) {
+
+    fn show_team_color(
+        &mut self,
+        ui: &mut egui::Ui,
+        team_color: [f32; 3],
+        new_team_color: &mut Option<[f32; 3]>,
+    ) {
         ui.collapsing("Team Color", |ui| {
             let mut color = team_color;
             if ui.color_edit_button_rgb(&mut color).changed() {
@@ -142,13 +188,13 @@ impl Ui {
             }
         });
     }
-    
+
     fn show_model_info(&mut self, ui: &mut egui::Ui, model: &Option<Model>) {
         if let Some(model) = model {
             ui.collapsing("Model Info", |ui| {
                 ui.label(format!("Name: {}", model.name));
                 ui.separator();
-                
+
                 ui.label(format!("Geosets: {}", model.geosets.len()));
                 let total_verts: usize = model.geosets.iter().map(|g| g.vertices.len()).sum();
                 let total_faces: usize = model.geosets.iter().map(|g| g.faces.len()).sum();
@@ -156,7 +202,7 @@ impl Ui {
                 ui.label(format!("  Total vertices: {}", total_verts));
                 ui.label(format!("  Total faces: {}", total_faces));
                 ui.label(format!("  Total UVs: {}", total_uvs));
-                
+
                 ui.separator();
                 ui.label(format!("Materials: {}", model.materials.len()));
                 ui.label(format!("Textures: {}", model.textures.len()));
@@ -171,7 +217,7 @@ impl Ui {
             }
         }
     }
-    
+
     fn show_geosets(&mut self, ui: &mut egui::Ui, model: &Option<Model>) {
         if let Some(model) = model {
             ui.collapsing("Geosets", |ui| {
@@ -185,8 +231,9 @@ impl Ui {
 
                             ui.horizontal(|ui| {
                                 ui.checkbox(&mut self.show_geosets[i], format!("#{}", i));
-                                ui.label(format!("{} verts, {} faces", 
-                                    geoset.vertices.len(), 
+                                ui.label(format!(
+                                    "{} verts, {} faces",
+                                    geoset.vertices.len(),
                                     geoset.faces.len()
                                 ));
                             });
@@ -204,28 +251,28 @@ impl Ui {
                 } else {
                     ui.label(format!("{} textures", model.textures.len()));
                     ui.separator();
-                    
+
                     egui::ScrollArea::vertical()
                         .max_height(200.0)
                         .show(ui, |ui| {
                             for (i, texture) in model.textures.iter().enumerate() {
                                 ui.horizontal(|ui| {
                                     ui.label(format!("#{}", i));
-                                    
+
                                     if texture.replaceable_id == 1 {
                                         ui.colored_label(
                                             egui::Color32::from_rgb(255, 100, 100),
-                                            "Team Color"
+                                            "Team Color",
                                         );
                                     } else if texture.replaceable_id == 2 {
                                         ui.colored_label(
                                             egui::Color32::from_rgb(255, 150, 150),
-                                            "Team Glow"
+                                            "Team Glow",
                                         );
                                     } else if texture.replaceable_id > 0 {
                                         ui.colored_label(
                                             egui::Color32::from_rgb(255, 180, 100),
-                                            format!("Replaceable ID {}", texture.replaceable_id)
+                                            format!("Replaceable ID {}", texture.replaceable_id),
                                         );
                                     } else if !texture.filename.is_empty() {
                                         ui.label(&texture.filename);
@@ -261,7 +308,10 @@ impl Ui {
                 // Show sequence details
                 let seq = &model.sequences[self.selected_sequence];
                 ui.label(format!("Frames: {} - {}", seq.start_frame, seq.end_frame));
-                ui.label(format!("Duration: {} frames", seq.end_frame - seq.start_frame));
+                ui.label(format!(
+                    "Duration: {} frames",
+                    seq.end_frame - seq.start_frame
+                ));
                 ui.label(format!("Non-looping: {}", seq.non_looping));
                 if let Some(rarity) = seq.rarity {
                     ui.label(format!("Rarity: {}", rarity));

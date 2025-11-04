@@ -4,8 +4,9 @@ struct CameraUniform {
 };
 
 struct MaterialUniform {
-    team_color: vec3<f32>,
-    use_team_color: f32, // 0.0 = use texture, 1.0 = replace with team color, 0.5 = blend
+    team_color_and_flags: vec4<f32>, // team_color.rgb + use_team_color
+    wireframe_and_padding: vec4<f32>, // wireframe_mode + padding
+    extra_padding: vec4<f32>, // Additional padding for alignment
 };
 
 @group(0) @binding(0)
@@ -50,11 +51,24 @@ fn vs_main(
 // Fragment shader with texture sampling
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Sample texture
+    // Extract values from uniform structure
+    let team_color = material.team_color_and_flags.xyz;
+    let use_team_color = material.team_color_and_flags.w;
+    let wireframe_mode = material.wireframe_and_padding.x;
+    
+    // In wireframe mode, use a solid color instead of texture
+    if (wireframe_mode > 0.5) {
+        // Use bright colors for wireframe to make lines visible
+        // Green for normal materials, yellow for team color materials
+        let wireframe_color = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 1.0, 0.0), use_team_color > 0.5);
+        return vec4<f32>(wireframe_color, 1.0);
+    }
+    
+    // Normal rendering - sample texture
     var tex_color = textureSample(t_diffuse, s_diffuse, in.uv);
     
     // Apply team color if needed
-    if (material.use_team_color > 0.5) {
+    if (use_team_color > 0.5) {
         // Standard Porter-Duff OVER compositing:
         // result = src + dst * (1 - src.alpha)
         // Where src = texture pixel, dst = team color
@@ -62,7 +76,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Texture OVER team color
         let src = tex_color.rgb;
         let src_alpha = tex_color.a;
-        let dst = material.team_color;
+        let dst = team_color;
         
         // result = src + dst * (1 - src_alpha)
         let final_rgb = src + dst * (1.0 - src_alpha);

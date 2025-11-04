@@ -15,6 +15,7 @@ pub struct App {
     last_mouse_pos: Option<(f64, f64)>,
     egui_state: egui_winit::State,
     texture_receiver: mpsc::UnboundedReceiver<(usize, Vec<u8>, u32, u32)>, // (texture_id, rgba_data, width, height)
+    texture_sender: mpsc::UnboundedSender<(usize, Vec<u8>, u32, u32)>, // For loading textures
 }
 
 pub struct EventResponse {
@@ -29,7 +30,7 @@ impl App {
         let ui = Ui::new();
 
         // Initialize renderer
-        let mut renderer = Renderer::new(&window).await?;
+        let renderer = Renderer::new(&window).await?;
 
         // Initialize egui_winit state
         let egui_ctx = renderer.egui_context();
@@ -51,82 +52,16 @@ impl App {
         // Create channel for background texture loading
         let (texture_sender, texture_receiver) = mpsc::unbounded_channel();
 
-        // Load test model
-        let model = match crate::parser::load_mdl("test-data/Arthas.mdx") {
-            Ok(model) => {
-                renderer.update_model(&model);
-                
-                // For replaceable textures, create appropriate textures
-                for (texture_id, texture) in model.textures.iter().enumerate() {
-                    if texture.replaceable_id == 1 {
-                        // Team color (RID 1) - find first real texture to use
-                        // This will be loaded below in the async loading loop
-                        println!("Texture {} is team color (RID 1) - will load texture", texture_id);
-                    } else if texture.replaceable_id == 2 {
-                        // Team glow (RID 2) - create 32x32 glow texture with alpha map
-                        println!("Creating team glow texture for texture {}", texture_id);
-                        renderer.create_team_glow_texture(texture_id);
-                    }
-                }
-                
-                // Start background texture loading tasks
-                for (texture_id, texture) in model.textures.iter().enumerate() {
-                    // Skip team glow (RID 2) - already created above
-                    if texture.replaceable_id == 2 {
-                        continue;
-                    }
-                    
-                    // For replaceable textures (team color RID 1), use first real texture
-                    // For normal textures, use their own filename
-                    let texture_path = if texture.replaceable_id == 1 {
-                        // For team color (RID 1), use first real texture as source
-                        model.textures.iter()
-                            .find(|t| t.replaceable_id == 0 && !t.filename.is_empty())
-                            .map(|t| t.filename.clone())
-                            .unwrap_or_default()
-                    } else {
-                        // For normal textures, use their own filename
-                        texture.filename.clone()
-                    };
-                    
-                    if texture_path.is_empty() {
-                        continue; // Skip if no texture to load
-                    }
-                    
-                    let sender = texture_sender.clone();
-                    
-                    // Spawn background task
-                    tokio::spawn(async move {
-                        println!("Background loading texture {}: {}", texture_id, texture_path);
-                        match crate::texture_loader::load_texture(&texture_path).await {
-                            Ok((rgba_data, width, height)) => {
-                                println!("Successfully loaded texture {} ({}x{}) in background", texture_id, width, height);
-                                let _ = sender.send((texture_id, rgba_data, width, height));
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to load texture {} ({}): {}", texture_id, texture_path, e);
-                            }
-                        }
-                    });
-                }
-                
-                Some(model)
-            }
-            Err(e) => {
-                eprintln!("Failed to load model: {}", e);
-                None
-            }
-        };
-
         Ok(Self {
             window,
             ui,
-            model,
+            model: None,
             renderer,
             mouse_pressed: false,
             last_mouse_pos: None,
             egui_state,
             texture_receiver,
+            texture_sender,
         })
     }
 
@@ -236,5 +171,70 @@ impl App {
         let far_plane = self.ui.settings.far_plane;
 
         self.renderer.render(show_skeleton, show_grid, wireframe_mode, far_plane, panel_width, &show_geosets, paint_jobs, full_output.textures_delta, screen_descriptor)
+    }
+
+    pub async fn load_model(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Loading model: {}", path);
+        
+        let model = crate::parser::load_mdl(path)?;
+        self.renderer.update_model(&model);
+        
+        // For replaceable textures, create appropriate textures
+        for (texture_id, texture) in model.textures.iter().enumerate() {
+            if texture.replaceable_id == 1 {
+                // Team color (RID 1) - find first real texture to use
+                println!("Texture {} is team color (RID 1) - will load texture", texture_id);
+            } else if texture.replaceable_id == 2 {
+                // Team glow (RID 2) - create 32x32 glow texture with alpha map
+                println!("Creating team glow texture for texture {}", texture_id);
+                self.renderer.create_team_glow_texture(texture_id);
+            }
+        }
+        
+        // Start background texture loading tasks
+        for (texture_id, texture) in model.textures.iter().enumerate() {
+            // Skip team glow (RID 2) - already created above
+            if texture.replaceable_id == 2 {
+                continue;
+            }
+            
+            // For replaceable textures (team color RID 1), use first real texture
+            // For normal textures, use their own filename
+            let texture_path = if texture.replaceable_id == 1 {
+                // For team color (RID 1), use first real texture as source
+                model.textures.iter()
+                    .find(|t| t.replaceable_id == 0 && !t.filename.is_empty())
+                    .map(|t| t.filename.clone())
+                    .unwrap_or_default()
+            } else {
+                // For normal textures, use their own filename
+                texture.filename.clone()
+            };
+            
+            if texture_path.is_empty() {
+                continue; // Skip if no texture to load
+            }
+            
+            let sender = self.texture_sender.clone();
+            
+            // Spawn background task
+            tokio::spawn(async move {
+                println!("Background loading texture {}: {}", texture_id, texture_path);
+                match crate::texture_loader::load_texture(&texture_path).await {
+                    Ok((rgba_data, width, height)) => {
+                        println!("Successfully loaded texture {} ({}x{}) in background", texture_id, width, height);
+                        let _ = sender.send((texture_id, rgba_data, width, height));
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to load texture {} ({}): {}", texture_id, texture_path, e);
+                    }
+                }
+            });
+        }
+        
+        self.model = Some(model);
+        println!("Model loaded successfully");
+        
+        Ok(())
     }
 }

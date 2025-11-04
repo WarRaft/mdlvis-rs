@@ -80,6 +80,7 @@ pub struct Renderer {
     render_pipeline: wgpu::RenderPipeline,
     wireframe_pipeline: wgpu::RenderPipeline,
     transparent_pipeline: wgpu::RenderPipeline,
+    wireframe_transparent_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -225,18 +226,21 @@ impl Renderer {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct MaterialUniform {
-            team_color: [f32; 3],
-            use_team_color: f32,
+            team_color_and_flags: [f32; 4], // team_color.xyz + use_team_color
+            wireframe_and_padding: [f32; 4], // wireframe_mode + padding
+            extra_padding: [f32; 4], // Additional padding for alignment
         }
         
         let material_uniform_normal = MaterialUniform {
-            team_color: [1.0, 1.0, 1.0], // Not used for normal
-            use_team_color: 0.0, // Don't use team color
+            team_color_and_flags: [1.0, 1.0, 1.0, 0.0], // team_color (not used) + use_team_color = 0.0
+            wireframe_and_padding: [0.0, 0.0, 0.0, 0.0], // wireframe_mode (will be updated) + padding
+            extra_padding: [0.0, 0.0, 0.0, 0.0],
         };
         
         let material_uniform_team = MaterialUniform {
-            team_color: [1.0, 0.0, 0.0], // Red by default
-            use_team_color: 1.0, // Use team color
+            team_color_and_flags: [1.0, 0.0, 0.0, 1.0], // team_color (red) + use_team_color = 1.0
+            wireframe_and_padding: [0.0, 0.0, 0.0, 0.0], // wireframe_mode (will be updated) + padding  
+            extra_padding: [0.0, 0.0, 0.0, 0.0],
         };
         
         let material_buffer_normal = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -573,6 +577,51 @@ impl Renderer {
             cache: None,
         });
 
+        // Create wireframe transparent rendering pipeline (same as transparent but with wireframe mode)
+        let wireframe_transparent_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Wireframe Transparent Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::desc()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Line, // Wireframe mode!
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false, // Don't write depth for transparent materials
+                depth_compare: wgpu::CompareFunction::Less, // But still test against depth
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         // Create line rendering pipeline
         let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Line Pipeline"),
@@ -689,6 +738,7 @@ impl Renderer {
             render_pipeline,
             wireframe_pipeline,
             transparent_pipeline,
+            wireframe_transparent_pipeline,
             line_pipeline,
             vertex_buffer,
             index_buffer,
@@ -761,6 +811,32 @@ impl Renderer {
         let view_proj = proj * view;
         self.view_proj_matrix = view_proj; // Store for axis label projection
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(view_proj.as_slice()));
+
+        // Update material uniforms with wireframe mode
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct MaterialUniform {
+            team_color_and_flags: [f32; 4],
+            wireframe_and_padding: [f32; 4],
+            extra_padding: [f32; 4],
+        }
+        
+        let wireframe_mode_f32 = if wireframe_mode { 1.0 } else { 0.0 };
+        
+        let material_uniform_normal = MaterialUniform {
+            team_color_and_flags: [1.0, 1.0, 1.0, 0.0], // team_color (not used) + use_team_color = 0.0
+            wireframe_and_padding: [wireframe_mode_f32, 0.0, 0.0, 0.0], // wireframe_mode + padding
+            extra_padding: [0.0, 0.0, 0.0, 0.0],
+        };
+        
+        let material_uniform_team = MaterialUniform {
+            team_color_and_flags: [self.team_color[0], self.team_color[1], self.team_color[2], 1.0], // team_color + use_team_color = 1.0
+            wireframe_and_padding: [wireframe_mode_f32, 0.0, 0.0, 0.0], // wireframe_mode + padding
+            extra_padding: [0.0, 0.0, 0.0, 0.0],
+        };
+        
+        self.queue.write_buffer(&self.material_buffer_normal, 0, bytemuck::cast_slice(&[material_uniform_normal]));
+        self.queue.write_buffer(&self.material_buffer_team, 0, bytemuck::cast_slice(&[material_uniform_team]));
 
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -920,7 +996,12 @@ impl Renderer {
                 }
                 
                 // PASS 2: Render transparent materials with depth test but no depth write
-                render_pass.set_pipeline(&self.transparent_pipeline);
+                let transparent_pipeline = if wireframe_mode {
+                    &self.wireframe_transparent_pipeline
+                } else {
+                    &self.transparent_pipeline
+                };
+                render_pass.set_pipeline(transparent_pipeline);
                 
                 for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
                     // Skip if geoset is hidden via UI
@@ -1196,13 +1277,15 @@ impl Renderer {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct MaterialUniform {
-            team_color: [f32; 3],
-            use_team_color: f32,
+            team_color_and_flags: [f32; 4],
+            wireframe_and_padding: [f32; 4],
+            extra_padding: [f32; 4],
         }
         
         let material_uniform = MaterialUniform {
-            team_color: color,
-            use_team_color: 1.0,
+            team_color_and_flags: [color[0], color[1], color[2], 1.0], // team_color + use_team_color = 1.0
+            wireframe_and_padding: [0.0, 0.0, 0.0, 0.0], // wireframe_mode (normal) + padding
+            extra_padding: [0.0, 0.0, 0.0, 0.0],
         };
         
         self.queue.write_buffer(&self.material_buffer_team, 0, bytemuck::cast_slice(&[material_uniform]));

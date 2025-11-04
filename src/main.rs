@@ -15,6 +15,14 @@ mod ui;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
+    // Parse command line arguments
+    let args: Vec<String> = std::env::args().collect();
+    let model_path = if args.len() > 1 {
+        Some(args[1].clone())
+    } else {
+        None
+    };
+
     let event_loop = EventLoop::new()?;
     let window = event_loop.create_window(Window::default_attributes()
         .with_title("MDLVis-RS - Warcraft 3 Model Viewer")
@@ -23,6 +31,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create tokio runtime for async texture loading
     let rt = tokio::runtime::Runtime::new()?;
     let mut app = rt.block_on(app::App::new(window))?;
+    
+    // Load model if provided as command line argument
+    if let Some(path) = model_path {
+        if let Err(e) = rt.block_on(app.load_model(&path)) {
+            eprintln!("Failed to load model '{}': {}", path, e);
+        }
+    }
 
     event_loop.run(move |event, elwt| {
         elwt.set_control_flow(ControlFlow::Poll);
