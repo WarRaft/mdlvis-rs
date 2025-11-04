@@ -56,7 +56,7 @@ impl App {
         // Load settings
         let settings = crate::settings::Settings::load();
 
-        Ok(Self {
+        let mut app = Self {
             window,
             ui,
             model: None,
@@ -67,7 +67,12 @@ impl App {
             texture_receiver,
             texture_sender,
             settings,
-        })
+        };
+
+        // Initialize renderer colors from loaded settings
+        app.renderer.update_colors(&app.settings, None);
+
+        Ok(app)
     }
 
     pub fn handle_event(&mut self, event: &winit::event::WindowEvent) -> EventResponse {
