@@ -12,7 +12,6 @@ mod pipeline_system;
 mod renderer;
 mod settings;
 mod texture_loader;
-mod texture_system;
 mod ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
