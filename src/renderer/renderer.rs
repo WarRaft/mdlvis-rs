@@ -52,9 +52,11 @@ pub struct Renderer {
     camera_yaw: f32,
     camera_pitch: f32,
     camera_distance: f32,
+    camera_target: [f32; 3], // Point camera orbits around
     default_camera_yaw: f32,
     default_camera_pitch: f32,
     default_camera_distance: f32,
+    default_camera_target: [f32; 3],
     model_center: [f32; 3],
     egui_renderer: egui_wgpu::Renderer,
     egui_ctx: egui::Context,
@@ -892,10 +894,12 @@ impl Renderer {
             skybox_color: [0.3, 0.5, 0.8],             // Light blue skybox
             camera_yaw: 0.0,                           // 0 degrees - front view
             camera_pitch: std::f32::consts::PI * 0.15, // 27 degrees - look slightly down at model
-            camera_distance: 200.0,
+            camera_distance: 500.0,
+            camera_target: [0.0, 0.0, 0.0],            // Look at origin initially
             default_camera_yaw: 0.0,
             default_camera_pitch: std::f32::consts::PI * 0.15,
-            default_camera_distance: 200.0,
+            default_camera_distance: 500.0,
+            default_camera_target: [0.0, 0.0, 0.0],
             model_center: [0.0, 0.0, 0.0],
             egui_renderer,
             egui_ctx,
@@ -938,16 +942,16 @@ impl Renderer {
         let proj = nalgebra_glm::perspective(aspect, 45.0_f32.to_radians(), 0.1, far_plane);
 
         let eye = nalgebra_glm::vec3(
-            self.model_center[0]
+            self.camera_target[0]
                 + self.camera_distance * self.camera_yaw.cos() * self.camera_pitch.cos(),
-            self.model_center[1]
+            self.camera_target[1]
                 + self.camera_distance * self.camera_yaw.sin() * self.camera_pitch.cos(),
-            self.model_center[2] + self.camera_distance * self.camera_pitch.sin(),
+            self.camera_target[2] + self.camera_distance * self.camera_pitch.sin(),
         );
         let center = nalgebra_glm::vec3(
-            self.model_center[0],
-            self.model_center[1],
-            self.model_center[2],
+            self.camera_target[0],
+            self.camera_target[1],
+            self.camera_target[2],
         );
         let up = nalgebra_glm::vec3(0.0, 0.0, 1.0); // Z-up coordinate system
         let view = nalgebra_glm::look_at(&eye, &center, &up);
@@ -1661,15 +1665,67 @@ impl Renderer {
         self.camera_pitch = self.camera_pitch.clamp(-1.5, 1.5);
     }
 
-    pub fn zoom_camera(&mut self, delta: f32) {
-        self.camera_distance -= delta * 10.0;
-        self.camera_distance = self.camera_distance.clamp(10.0, 1000.0);
+    pub fn zoom_camera(&mut self, delta: f32, cursor_ndc: Option<[f32; 2]>) {
+        let zoom_factor = 1.0 - delta * 0.1;
+        let new_distance = (self.camera_distance * zoom_factor).clamp(10.0, 1000.0);
+        
+        if let Some(ndc) = cursor_ndc {
+            // Zoom towards cursor position
+            // Calculate camera forward vector
+            let forward = nalgebra_glm::normalize(&nalgebra_glm::vec3(
+                self.camera_yaw.cos() * self.camera_pitch.cos(),
+                self.camera_yaw.sin() * self.camera_pitch.cos(),
+                self.camera_pitch.sin(),
+            ));
+            let right = nalgebra_glm::normalize(&nalgebra_glm::cross(&forward, &nalgebra_glm::vec3(0.0, 0.0, 1.0)));
+            let up = nalgebra_glm::cross(&right, &forward);
+            
+            // Calculate cursor direction (approximation using NDC)
+            let aspect = self.config.width as f32 / self.config.height as f32;
+            let fov_scale = (45.0_f32.to_radians() / 2.0).tan();
+            let cursor_dir = nalgebra_glm::normalize(&(
+                forward + right * ndc[0] * fov_scale * aspect + up * ndc[1] * fov_scale
+            ));
+            
+            // Move camera target towards cursor direction
+            let distance_change = self.camera_distance - new_distance;
+            let target_offset = cursor_dir * distance_change * 0.5; // 0.5 for smooth zoom
+            
+            self.camera_target[0] += target_offset.x;
+            self.camera_target[1] += target_offset.y;
+            self.camera_target[2] += target_offset.z;
+        }
+        
+        self.camera_distance = new_distance;
     }
 
     pub fn reset_camera(&mut self) {
         self.camera_yaw = self.default_camera_yaw;
         self.camera_pitch = self.default_camera_pitch;
         self.camera_distance = self.default_camera_distance;
+        self.camera_target = self.default_camera_target;
+    }
+
+    pub fn pan_camera(&mut self, delta_x: f32, delta_y: f32) {
+        // Calculate camera's right and up vectors
+        let forward = nalgebra_glm::vec3(
+            self.camera_yaw.cos() * self.camera_pitch.cos(),
+            self.camera_yaw.sin() * self.camera_pitch.cos(),
+            self.camera_pitch.sin(),
+        );
+        let right = nalgebra_glm::normalize(&nalgebra_glm::cross(
+            &forward,
+            &nalgebra_glm::vec3(0.0, 0.0, 1.0),
+        ));
+        let up = nalgebra_glm::cross(&right, &forward);
+
+        // Pan speed based on distance
+        let pan_speed = self.camera_distance * 0.001;
+
+        // Move target
+        self.camera_target[0] += right.x * delta_x * pan_speed + up.x * delta_y * pan_speed;
+        self.camera_target[1] += right.y * delta_x * pan_speed + up.y * delta_y * pan_speed;
+        self.camera_target[2] += right.z * delta_x * pan_speed + up.z * delta_y * pan_speed;
     }
 
     pub fn get_camera_orientation(&self) -> (f32, f32) {

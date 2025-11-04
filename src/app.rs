@@ -11,7 +11,11 @@ pub struct App {
     ui: Ui,
     model: Option<Model>,
     renderer: Renderer,
-    mouse_pressed: bool,
+    left_mouse_pressed: bool,
+    middle_mouse_pressed: bool,
+    shift_pressed: bool,
+    trackpad_pressed: bool, // Track if trackpad is physically pressed during gesture
+    current_cursor_pos: Option<(f64, f64)>,
     last_mouse_pos: Option<(f64, f64)>,
     egui_state: egui_winit::State,
     texture_receiver: mpsc::UnboundedReceiver<(usize, Vec<u8>, u32, u32)>, // (texture_id, rgba_data, width, height)
@@ -60,7 +64,11 @@ impl App {
             ui,
             model: None,
             renderer,
-            mouse_pressed: false,
+            left_mouse_pressed: false,
+            middle_mouse_pressed: false,
+            shift_pressed: false,
+            trackpad_pressed: false,
+            current_cursor_pos: None,
             last_mouse_pos: None,
             egui_state,
             texture_receiver,
@@ -103,29 +111,145 @@ impl App {
                 self.renderer.resize(*size);
             }
             winit::event::WindowEvent::MouseInput { state, button, .. } => {
-                if *button == winit::event::MouseButton::Left {
-                    self.mouse_pressed = *state == winit::event::ElementState::Pressed;
-                    if !self.mouse_pressed {
-                        self.last_mouse_pos = None;
+                let is_pressed = *state == winit::event::ElementState::Pressed;
+                match button {
+                    winit::event::MouseButton::Left => {
+                        self.left_mouse_pressed = is_pressed;
+                        // Track trackpad press (left click during gesture)
+                        self.trackpad_pressed = is_pressed;
+                        if !self.left_mouse_pressed {
+                            self.last_mouse_pos = None;
+                        }
                     }
+                    winit::event::MouseButton::Middle => {
+                        self.middle_mouse_pressed = is_pressed;
+                        if !self.middle_mouse_pressed {
+                            self.last_mouse_pos = None;
+                        }
+                    }
+                    _ => {}
                 }
             }
+            winit::event::WindowEvent::ModifiersChanged(modifiers) => {
+                self.shift_pressed = modifiers.state().shift_key();
+            }
             winit::event::WindowEvent::CursorMoved { position, .. } => {
-                if self.mouse_pressed {
+                self.current_cursor_pos = Some((position.x, position.y));
+                
+                if self.left_mouse_pressed && self.shift_pressed {
+                    // Pan camera with Shift+LMB (for trackpad users)
+                    if let Some(last_pos) = self.last_mouse_pos {
+                        let delta_x = position.x - last_pos.0;
+                        let delta_y = position.y - last_pos.1;
+                        self.renderer.pan_camera(delta_x as f32, delta_y as f32);
+                    }
+                    self.last_mouse_pos = Some((position.x, position.y));
+                } else if self.left_mouse_pressed {
+                    // Orbit camera
                     if let Some(last_pos) = self.last_mouse_pos {
                         let delta_x = position.x - last_pos.0;
                         let delta_y = position.y - last_pos.1;
                         self.renderer.rotate_camera(delta_x as f32, delta_y as f32);
                     }
                     self.last_mouse_pos = Some((position.x, position.y));
+                } else if self.middle_mouse_pressed {
+                    // Pan camera with middle mouse button
+                    if let Some(last_pos) = self.last_mouse_pos {
+                        let delta_x = position.x - last_pos.0;
+                        let delta_y = position.y - last_pos.1;
+                        self.renderer.pan_camera(delta_x as f32, -delta_y as f32);
+                    }
+                    self.last_mouse_pos = Some((position.x, position.y));
                 }
             }
-            winit::event::WindowEvent::MouseWheel { delta, .. } => {
-                let scroll_delta = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, y) => *y,
-                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.1,
+            winit::event::WindowEvent::MouseWheel { delta, phase, .. } => {
+                match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => {
+                        // Mouse wheel - zoom
+                        let scroll_delta = *y;
+                        
+                        // Convert cursor position to NDC for zoom-to-cursor
+                        let cursor_ndc = if let Some((cx, cy)) = self.current_cursor_pos {
+                            let window_size = self.window.inner_size();
+                            let panel_width = self.ui.get_panel_width();
+                            let panel_width_pixels = panel_width * window_size.width as f32;
+                            
+                            // Viewport is to the right of the panel
+                            let viewport_x = cx as f32 - panel_width_pixels;
+                            let viewport_width = window_size.width as f32 - panel_width_pixels;
+                            let viewport_height = window_size.height as f32;
+                            
+                            if viewport_x >= 0.0 && viewport_x < viewport_width && cy >= 0.0 && (cy as f32) < viewport_height {
+                                // Convert to NDC [-1, 1]
+                                let ndc_x = (viewport_x / viewport_width) * 2.0 - 1.0;
+                                let ndc_y = 1.0 - (cy as f32 / viewport_height) * 2.0;
+                                Some([ndc_x, ndc_y])
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        
+                        self.renderer.zoom_camera(scroll_delta, cursor_ndc);
+                    }
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => {
+                        // Trackpad - two finger gesture
+                        use winit::event::TouchPhase;
+                        
+                        if matches!(phase, TouchPhase::Moved) {
+                            if self.trackpad_pressed {
+                                // Trackpad physically pressed + two fingers = pan camera
+                                let pan_speed = 1.0;
+                                self.renderer.pan_camera(pos.x as f32 * pan_speed, pos.y as f32 * pan_speed);
+                            } else {
+                                // Two finger drag = rotate camera
+                                let rotation_speed = 0.5;
+                                self.renderer.rotate_camera(pos.x as f32 * rotation_speed, pos.y as f32 * rotation_speed);
+                            }
+                        }
+                    }
+                }
+            }
+            winit::event::WindowEvent::PinchGesture { delta, .. } => {
+                // Pinch gesture for zoom
+                let zoom_delta = *delta as f32 * 100.0; // Scale for appropriate zoom speed
+                
+                // Convert cursor position to NDC for zoom-to-cursor
+                let cursor_ndc = if let Some((cx, cy)) = self.current_cursor_pos {
+                    let window_size = self.window.inner_size();
+                    let panel_width = self.ui.get_panel_width();
+                    let panel_width_pixels = panel_width * window_size.width as f32;
+                    
+                    let viewport_x = cx as f32 - panel_width_pixels;
+                    let viewport_width = window_size.width as f32 - panel_width_pixels;
+                    let viewport_height = window_size.height as f32;
+                    
+                    if viewport_x >= 0.0 && viewport_x < viewport_width && cy >= 0.0 && (cy as f32) < viewport_height {
+                        let ndc_x = (viewport_x / viewport_width) * 2.0 - 1.0;
+                        let ndc_y = 1.0 - (cy as f32 / viewport_height) * 2.0;
+                        Some([ndc_x, ndc_y])
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 };
-                self.renderer.zoom_camera(scroll_delta);
+                
+                self.renderer.zoom_camera(zoom_delta, cursor_ndc);
+            }
+            winit::event::WindowEvent::RotationGesture { delta, .. } => {
+                // Two-finger rotation gesture for camera rotation
+                let rotation_speed = 2.0;
+                self.renderer.rotate_camera(*delta * rotation_speed, 0.0);
+            }
+            winit::event::WindowEvent::PanGesture { delta, phase, .. } => {
+                // Two-finger drag gesture for camera rotation
+                use winit::event::TouchPhase;
+                if matches!(phase, TouchPhase::Moved) {
+                    let rotation_speed = 0.5;
+                    self.renderer.rotate_camera(delta.x * rotation_speed, -delta.y * rotation_speed);
+                }
             }
             _ => {}
         }

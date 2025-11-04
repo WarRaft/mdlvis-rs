@@ -6,6 +6,7 @@ pub struct Ui {
     selected_sequence: usize,
     animation_time: f32,
     is_playing: bool,
+    panel_width: f32,
 }
 
 impl Ui {
@@ -15,7 +16,12 @@ impl Ui {
             selected_sequence: 0,
             animation_time: 0.0,
             is_playing: false,
+            panel_width: 300.0, // Default width
         }
+    }
+
+    pub fn get_panel_width(&self) -> f32 {
+        self.panel_width
     }
 
     pub fn show(
@@ -43,6 +49,7 @@ impl Ui {
 
         // Get panel width for viewport adjustment
         let panel_width = panel_response.response.rect.width();
+        self.panel_width = panel_width; // Store for later use
 
         // Draw axis gizmo in bottom-right corner
         let gizmo_size = 80.0;
