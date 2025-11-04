@@ -5,7 +5,7 @@ struct CameraUniform {
 
 struct MaterialUniform {
     team_color_and_flags: vec4<f32>, // team_color.rgb + use_team_color
-    material_type_and_wireframe: vec4<f32>, // filter_mode + wireframe_mode + padding
+    material_type_and_wireframe: vec4<f32>, // filter_mode + wireframe_mode + is_team_glow + padding
     extra_padding: vec4<f32>, // Additional padding for alignment
 };
 
@@ -56,6 +56,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let use_team_color = material.team_color_and_flags.w;
     let filter_mode = material.material_type_and_wireframe.x;
     let wireframe_mode = material.material_type_and_wireframe.y;
+    let is_team_glow = material.material_type_and_wireframe.z;
     
     // In wireframe mode, use a solid color instead of texture
     if (wireframe_mode > 0.5) {
@@ -75,24 +76,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     // Apply team color blending based on material type
     if (use_team_color > 0.5) {
-        // Check if this is a team glow texture (ReplaceableID=2) by looking at texture content
-        // Team glow textures are white with alpha pattern, so if the texture is mostly white, treat as glow
-        let is_team_glow = dot(tex_color.rgb, vec3<f32>(1.0, 1.0, 1.0)) > 2.5; // Close to white (3.0 = pure white)
+        let is_team_glow = material.material_type_and_wireframe.z > 0.5;
         
-        if (filter_mode >= 3.0 && filter_mode <= 4.0) || is_team_glow {
-            // Additive/AddAlpha materials OR team glow materials (glow effects)
-            // In original: glColor4f(team_color * alpha) modulates the white glow texture
-            // This means: final_color = glow_texture * team_color * alpha
-            // The glow should be almost pure team color, not mixed
-            tex_color = vec4<f32>(team_color * tex_color.a, tex_color.a);
+        if (is_team_glow) {
+            // Team Glow (ReplaceableID=2): white texture with alpha pattern
+            // Multiply team color by alpha to get glow intensity
+            let glow_rgb = team_color * tex_color.a;
+            tex_color = vec4<f32>(glow_rgb.x, glow_rgb.y, glow_rgb.z, tex_color.a);
         } else {
-            // Standard Porter-Duff OVER compositing for other materials
-            // result = src + dst * (1 - src.alpha)
-            let src = tex_color.rgb;
-            let src_alpha = tex_color.a;
-            let dst = team_color;
-            let final_rgb = src + dst * (1.0 - src_alpha);
-            tex_color = vec4<f32>(final_rgb, src_alpha);
+            // Regular Team Color (ReplaceableID=1): blend team color with texture using alpha
+            // Where alpha=0: show team_color, where alpha=1: show texture
+            let blended = mix(team_color, tex_color.rgb, tex_color.a);
+            tex_color = vec4<f32>(blended.x, blended.y, blended.z, tex_color.a);
         }
     }
     

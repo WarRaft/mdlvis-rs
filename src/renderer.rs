@@ -102,11 +102,13 @@ pub struct Renderer {
     texture_bind_groups: Vec<wgpu::BindGroup>, // One bind group per texture
     team_color_bind_group: wgpu::BindGroup,
     texture_bind_group_layout: wgpu::BindGroupLayout,
-    // Material uniforms - two bind groups: one for normal rendering, one for team color
+    // Material uniforms - three bind groups: normal, team color, team glow
     material_buffer_normal: wgpu::Buffer,
     material_buffer_team: wgpu::Buffer,
+    material_buffer_team_glow: wgpu::Buffer,
     material_bind_group_normal: wgpu::BindGroup,
     material_bind_group_team: wgpu::BindGroup,
+    material_bind_group_team_glow: wgpu::BindGroup,
     material_bind_group_layout: wgpu::BindGroupLayout,
     // Store white texture components to create bind groups for missing textures
     white_texture_view: wgpu::TextureView,
@@ -230,9 +232,10 @@ impl Renderer {
             }],
         });
 
-        // Create material uniform buffers - one for normal, one for team color
+        // Create material uniform buffers - normal, team color, team glow
         let material_uniform_normal = MaterialUniform::normal(false, FilterMode::Opaque);
-        let material_uniform_team = MaterialUniform::team_color([1.0, 0.0, 0.0], false, FilterMode::Opaque);
+        let material_uniform_team = MaterialUniform::team_color([1.0, 0.0, 0.0], false, FilterMode::Opaque, false);
+        let material_uniform_team_glow = MaterialUniform::team_color([1.0, 0.0, 0.0], false, FilterMode::Opaque, true);
         
         let material_buffer_normal = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Material Buffer Normal"),
@@ -243,6 +246,12 @@ impl Renderer {
         let material_buffer_team = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Material Buffer Team"),
             contents: bytemuck::cast_slice(&[material_uniform_team]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        
+        let material_buffer_team_glow = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Material Buffer Team Glow"),
+            contents: bytemuck::cast_slice(&[material_uniform_team_glow]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         
@@ -275,6 +284,15 @@ impl Renderer {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: material_buffer_team.as_entire_binding(),
+            }],
+        });
+        
+        let material_bind_group_team_glow = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Material Bind Group Team Glow"),
+            layout: &material_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: material_buffer_team_glow.as_entire_binding(),
             }],
         });
 
@@ -872,8 +890,10 @@ impl Renderer {
             texture_bind_group_layout,
             material_buffer_normal,
             material_buffer_team,
+            material_buffer_team_glow,
             material_bind_group_normal,
             material_bind_group_team,
+            material_bind_group_team_glow,
             material_bind_group_layout,
             white_texture_view: diffuse_texture_view,
             white_texture_sampler: diffuse_sampler,
@@ -931,7 +951,7 @@ impl Renderer {
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(view_proj.as_slice()));
 
         // Helper closure to update material uniform for specific geoset
-        let update_material_uniform = |geoset: &GeosetRenderInfo, is_team_color: bool| -> MaterialUniform {
+        let update_material_uniform = |geoset: &GeosetRenderInfo, is_team_color: bool, is_team_glow: bool| -> MaterialUniform {
             let filter_mode = if let Some(mat_id) = geoset.material_id {
                 if mat_id < self.materials.len() {
                     let material = &self.materials[mat_id];
@@ -948,7 +968,7 @@ impl Renderer {
             };
 
             if is_team_color {
-                MaterialUniform::team_color(self.team_color, wireframe_mode, filter_mode)
+                MaterialUniform::team_color(self.team_color, wireframe_mode, filter_mode, is_team_glow)
             } else {
                 MaterialUniform::normal(wireframe_mode, filter_mode)
             }
@@ -1054,48 +1074,59 @@ impl Renderer {
                 // Helper closure to render a geoset
                 let render_geoset = |render_pass: &mut wgpu::RenderPass, geoset: &GeosetRenderInfo| {
                     // Determine texture, material bind group, and material type
-                    let (texture_bind_group, is_team_color) = if let Some(mat_id) = geoset.material_id {
+                    let (texture_bind_group, is_team_color, is_team_glow) = if let Some(mat_id) = geoset.material_id {
                         if mat_id < self.materials.len() {
                             let material = &self.materials[mat_id];
                             if let Some(layer) = material.layers.first() {
                                 if let Some(tex_id) = layer.texture_id {
                                     if tex_id < self.textures.len() {
                                         let texture = &self.textures[tex_id];
-                                        // For replaceable textures: use loaded texture (if available) + team color
-                                        if texture.replaceable_id == 1 || texture.replaceable_id == 2 {
+                                        // Distinguish between ReplaceableID=1 (team color) and ReplaceableID=2 (team glow)
+                                        if texture.replaceable_id == 1 {
                                             let tex_bg = if tex_id < self.texture_bind_groups.len() {
                                                 &self.texture_bind_groups[tex_id]
                                             } else {
                                                 &self.texture_bind_groups[0]
                                             };
-                                            (tex_bg, true)
+                                            (tex_bg, true, false) // Team color, NOT glow
+                                        } else if texture.replaceable_id == 2 {
+                                            let tex_bg = if tex_id < self.texture_bind_groups.len() {
+                                                &self.texture_bind_groups[tex_id]
+                                            } else {
+                                                &self.texture_bind_groups[0]
+                                            };
+                                            (tex_bg, true, true) // Team glow
                                         } else if tex_id < self.texture_bind_groups.len() {
-                                            (&self.texture_bind_groups[tex_id], false)
+                                            (&self.texture_bind_groups[tex_id], false, false)
                                         } else {
-                                            (&self.texture_bind_groups[0], false)
+                                            (&self.texture_bind_groups[0], false, false)
                                         }
                                     } else {
-                                        (&self.texture_bind_groups[0], false)
+                                        (&self.texture_bind_groups[0], false, false)
                                     }
                                 } else {
-                                    (&self.texture_bind_groups[0], false)
+                                    (&self.texture_bind_groups[0], false, false)
                                 }
                             } else {
-                                (&self.texture_bind_groups[0], false)
+                                (&self.texture_bind_groups[0], false, false)
                             }
                         } else {
-                            (&self.texture_bind_groups[0], false)
+                            (&self.texture_bind_groups[0], false, false)
                         }
                     } else {
-                        (&self.texture_bind_groups[0], false)
+                        (&self.texture_bind_groups[0], false, false)
                     };
                     
                     // Update material uniform for this specific geoset
-                    let material_uniform = update_material_uniform(geoset, is_team_color);
-                    let material_buffer = if is_team_color { &self.material_buffer_team } else { &self.material_buffer_normal };
+                    let material_uniform = update_material_uniform(geoset, is_team_color, is_team_glow);
+                    let (material_buffer, material_bind_group) = if is_team_glow {
+                        (&self.material_buffer_team_glow, &self.material_bind_group_team_glow)
+                    } else if is_team_color {
+                        (&self.material_buffer_team, &self.material_bind_group_team)
+                    } else {
+                        (&self.material_buffer_normal, &self.material_bind_group_normal)
+                    };
                     self.queue.write_buffer(material_buffer, 0, bytemuck::cast_slice(&[material_uniform]));
-                    
-                    let material_bind_group = if is_team_color { &self.material_bind_group_team } else { &self.material_bind_group_normal };
                     
                     render_pass.set_bind_group(1, texture_bind_group, &[]);
                     render_pass.set_bind_group(2, material_bind_group, &[]);
@@ -1598,7 +1629,7 @@ impl Renderer {
         self.team_color = color;
         
         // Update team material buffer - use default values since actual material type will be set during rendering
-        let material_uniform = MaterialUniform::team_color(color, false, FilterMode::Opaque);
+        let material_uniform = MaterialUniform::team_color(color, false, FilterMode::Opaque, false);
         
         self.queue.write_buffer(&self.material_buffer_team, 0, bytemuck::cast_slice(&[material_uniform]));
     }
@@ -1732,12 +1763,12 @@ impl Renderer {
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Texture Sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
         
@@ -1805,7 +1836,9 @@ impl Renderer {
             1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1
         ];
         
-        // Create RGBA texture: white color (255,255,255) with varying alpha
+        // Create RGBA texture: white color with varying alpha
+        // Delphi creates pre-multiplied texture, but we can't do that since team_color changes
+        // Instead, we create white texture and multiply by team_color in shader
         let mut rgba_data = Vec::with_capacity(32 * 32 * 4);
         for alpha_byte in &TEAM_GLOW_ALPHA {
             let alpha = (*alpha_byte as f32 / 127.0 * 255.0) as u8; // Scale 0-127 to 0-255

@@ -27,13 +27,13 @@ impl MaterialUniform {
     }
 
     /// Create material uniform for team color rendering
-    pub fn team_color(team_color: [f32; 3], wireframe_mode: bool, filter_mode: FilterMode) -> Self {
+    pub fn team_color(team_color: [f32; 3], wireframe_mode: bool, filter_mode: FilterMode, is_team_glow: bool) -> Self {
         Self {
             team_color_and_flags: [team_color[0], team_color[1], team_color[2], 1.0], // team color enabled
             material_type_and_wireframe: [
                 filter_mode_to_f32(filter_mode),
                 if wireframe_mode { 1.0 } else { 0.0 },
-                0.0,
+                if is_team_glow { 1.0 } else { 0.0 },
                 0.0
             ],
             extra_padding: [0.0, 0.0, 0.0, 0.0],
