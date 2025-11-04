@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use byteorder::{LittleEndian, ReadBytesExt};
-use crate::model::{Model, Geoset, Material, Sequence, Bone};
+use crate::model::{Model, Geoset, Sequence, Bone};
 
 pub fn load_mdl(path: &str) -> Result<Model, Box<dyn std::error::Error>> {
     let mut file = File::open(path)?;
@@ -93,8 +93,7 @@ fn load_mdx(file: &mut File) -> Result<Model, Box<dyn std::error::Error>> {
             }
             b"MTLS" => {
                 // Materials
-                let material = Material::default();
-                model.materials.push(material);
+                read_materials(file, &mut model, size)?;
             }
             _ => {
                 // Skip unknown chunk
@@ -122,79 +121,111 @@ fn read_geosets(file: &mut File, model: &mut Model, geos_size: u32) -> Result<()
         
         // Each geoset has inclusiveSize field
         let inclusive_size = file.read_u32::<LittleEndian>()?;
+        let geoset_end = geoset_start + inclusive_size as u64;
         
-        if inclusive_size == 0 || geoset_start + inclusive_size as u64 > end_pos {
+        if inclusive_size == 0 || geoset_end > end_pos {
             break;
         }
         
         let mut geoset = Geoset::default();
-
-        // Read VRTX chunk
+        let mut indices = Vec::new();
         let mut tag = [0u8; 4];
-        file.read_exact(&mut tag)?;
-        if &tag != b"VRTX" {
-            println!("Warning: Expected VRTX, got {:?}, skipping geoset", String::from_utf8_lossy(&tag));
-            file.seek(SeekFrom::Start(geoset_start + inclusive_size as u64))?;
-            continue;
-        }
-        let nverts = file.read_u32::<LittleEndian>()? as usize;
-        for _ in 0..nverts {
-            let x = file.read_f32::<LittleEndian>()?;
-            let y = file.read_f32::<LittleEndian>()?;
-            let z = file.read_f32::<LittleEndian>()?;
-            geoset.vertices.push(crate::model::Vertex { position: [x, y, z] });
-        }
-
-        // Read NRMS chunk
-        file.read_exact(&mut tag)?;
-        if &tag != b"NRMS" {
-            println!("Warning: Expected NRMS, got {:?}, skipping rest of geoset", String::from_utf8_lossy(&tag));
-            file.seek(SeekFrom::Start(geoset_start + inclusive_size as u64))?;
-            continue;
-        }
-        let nnorms = file.read_u32::<LittleEndian>()? as usize;
-        for _ in 0..nnorms {
-            let x = file.read_f32::<LittleEndian>()?;
-            let y = file.read_f32::<LittleEndian>()?;
-            let z = file.read_f32::<LittleEndian>()?;
-            geoset.normals.push(crate::model::Normal { normal: [x, y, z] });
-        }
-
-        // Read and skip PTYP
-        file.read_exact(&mut tag)?;
-        if &tag != b"PTYP" {
-            println!("Warning: Expected PTYP, got {:?}", String::from_utf8_lossy(&tag));
-            file.seek(SeekFrom::Start(geoset_start + inclusive_size as u64))?;
-            continue;
-        }
-        let ptyp_count = file.read_u32::<LittleEndian>()?;
-        file.seek(SeekFrom::Current((ptyp_count * 4) as i64))?;
-
-        // Read and skip PCNT  
-        file.read_exact(&mut tag)?;
-        if &tag != b"PCNT" {
-            println!("Warning: Expected PCNT, got {:?}", String::from_utf8_lossy(&tag));
-            file.seek(SeekFrom::Start(geoset_start + inclusive_size as u64))?;
-            continue;
-        }
-        let pcnt_count = file.read_u32::<LittleEndian>()?;
-        file.seek(SeekFrom::Current((pcnt_count * 4) as i64))?;
-
-        // Read PVTX (vertex indices)
-        file.read_exact(&mut tag)?;
-        if &tag != b"PVTX" {
-            println!("Warning: Expected PVTX, got {:?}", String::from_utf8_lossy(&tag));
-            file.seek(SeekFrom::Start(geoset_start + inclusive_size as u64))?;
-            continue;
+        
+        // Read all chunks within this geoset (order not guaranteed)
+        while file.stream_position()? < geoset_end {
+            // Check if we have at least 4 bytes left for a tag
+            if geoset_end - file.stream_position()? < 4 {
+                break;
+            }
+            
+            file.read_exact(&mut tag)?;
+            
+            match &tag {
+                b"VRTX" => {
+                    let count = file.read_u32::<LittleEndian>()? as usize;
+                    for _ in 0..count {
+                        let x = file.read_f32::<LittleEndian>()?;
+                        let y = file.read_f32::<LittleEndian>()?;
+                        let z = file.read_f32::<LittleEndian>()?;
+                        geoset.vertices.push(crate::model::Vertex { position: [x, y, z] });
+                    }
+                }
+                b"NRMS" => {
+                    let count = file.read_u32::<LittleEndian>()? as usize;
+                    for _ in 0..count {
+                        let x = file.read_f32::<LittleEndian>()?;
+                        let y = file.read_f32::<LittleEndian>()?;
+                        let z = file.read_f32::<LittleEndian>()?;
+                        geoset.normals.push(crate::model::Normal { normal: [x, y, z] });
+                    }
+                }
+                b"PTYP" => {
+                    let count = file.read_u32::<LittleEndian>()?;
+                    file.seek(SeekFrom::Current((count * 4) as i64))?;
+                }
+                b"PCNT" => {
+                    let count = file.read_u32::<LittleEndian>()?;
+                    file.seek(SeekFrom::Current((count * 4) as i64))?;
+                }
+                b"PVTX" => {
+                    let count = file.read_u32::<LittleEndian>()? as usize;
+                    for _ in 0..count {
+                        let index = file.read_u16::<LittleEndian>()?;
+                        indices.push(index as u32);
+                    }
+                }
+                b"GNDX" => {
+                    let count = file.read_u32::<LittleEndian>()?;
+                    file.seek(SeekFrom::Current(count as i64))?;
+                }
+                b"MTGC" => {
+                    let count = file.read_u32::<LittleEndian>()?;
+                    file.seek(SeekFrom::Current((count * 4) as i64))?;
+                }
+                b"MATS" => {
+                    let count = file.read_u32::<LittleEndian>()?;
+                    if count > 0 {
+                        // Read first material ID
+                        let mat_id = file.read_u32::<LittleEndian>()?;
+                        geoset.material_id = Some(mat_id as usize);
+                        // Skip remaining
+                        file.seek(SeekFrom::Current(((count - 1) * 4) as i64))?;
+                    }
+                }
+                b"UVAS" => {
+                    let uvas_count = file.read_u32::<LittleEndian>()?;
+                    
+                    // Read first UVBS set (primary texture coordinates)
+                    if uvas_count > 0 {
+                        file.read_exact(&mut tag)?;
+                        if &tag == b"UVBS" {
+                            let uvbs_count = file.read_u32::<LittleEndian>()? as usize;
+                            for _ in 0..uvbs_count {
+                                let u = file.read_f32::<LittleEndian>()?;
+                                let v = file.read_f32::<LittleEndian>()?;
+                                geoset.tex_coords.push(crate::model::TexCoord { uv: [u, v] });
+                            }
+                        }
+                        
+                        // Skip remaining UVAS sets (secondary UVs)
+                        for _ in 1..uvas_count {
+                            file.read_exact(&mut tag)?;
+                            if &tag == b"UVBS" {
+                                let count = file.read_u32::<LittleEndian>()?;
+                                file.seek(SeekFrom::Current((count * 8) as i64))?;
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // Not a known chunk tag - could be materialId, selectionGroup, etc.
+                    // Treat as u32 value
+                    file.seek(SeekFrom::Current(-4))?; // Go back
+                    let _val = file.read_u32::<LittleEndian>()?;
+                }
+            }
         }
         
-        let num_indices = file.read_u32::<LittleEndian>()? as usize;
-        let mut indices = Vec::new();
-        for _ in 0..num_indices {
-            let index = file.read_u16::<LittleEndian>()?;
-            indices.push(index as u32);
-        }
-
         // Group indices into triangles
         for chunk in indices.chunks(3) {
             if chunk.len() == 3 {
@@ -375,6 +406,68 @@ fn read_helpers(file: &mut File, model: &mut Model, size: u32) -> Result<(), Box
     }
     
     println!("Loaded {} helpers", model.helpers.len());
+    Ok(())
+}
+
+fn read_materials(file: &mut File, model: &mut Model, size: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let start_pos = file.seek(SeekFrom::Current(0))?;
+    let end_pos = start_pos + size as u64;
+    
+    // Each material has inclusiveSize at the start
+    while file.seek(SeekFrom::Current(0))? < end_pos {
+        let material_size = file.read_u32::<LittleEndian>()?;
+        let material_start = file.seek(SeekFrom::Current(0))?;
+        let material_end = material_start + (material_size as u64) - 4; // -4 because we already read size
+        
+        // Skip priority plane and flags
+        file.seek(SeekFrom::Current(8))?;
+        
+        // Read LAYS tag
+        let mut tag = [0u8; 4];
+        file.read_exact(&mut tag)?;
+        
+        if &tag != b"LAYS" {
+            // Not a valid material, skip to end
+            file.seek(SeekFrom::Start(material_end))?;
+            continue;
+        }
+        
+        let layers_count = file.read_u32::<LittleEndian>()?;
+        let mut material = crate::model::Material::default();
+        
+        // Read each layer
+        for _ in 0..layers_count {
+            let layer_size = file.read_u32::<LittleEndian>()?;
+            let layer_start = file.seek(SeekFrom::Current(0))?;
+            let layer_end = layer_start + (layer_size as u64) - 4;
+            
+            // Read layer data
+            let _filter_mode = file.read_u32::<LittleEndian>()?;
+            let _shading_flags = file.read_u32::<LittleEndian>()?;
+            let texture_id = file.read_u32::<LittleEndian>()?;
+            let _texture_animation_id = file.read_u32::<LittleEndian>()?;
+            let _coord_id = file.read_u32::<LittleEndian>()?;
+            let _alpha = file.read_f32::<LittleEndian>()?;
+            
+            let layer = crate::model::Layer {
+                texture_id: Some(texture_id as usize),
+                filter_mode: crate::model::FilterMode::Opaque,
+                alpha: 1.0,
+            };
+            material.layers.push(layer);
+            
+            // Skip to end of layer (may contain optional track chunks KMTF, KMTA, etc.)
+            file.seek(SeekFrom::Start(layer_end))?;
+        }
+        
+        model.materials.push(material);
+        
+        // Seek to end of material
+        file.seek(SeekFrom::Start(material_end))?;
+    }
+    
+    println!("Loaded {} materials", model.materials.len());
+    
     Ok(())
 }
 

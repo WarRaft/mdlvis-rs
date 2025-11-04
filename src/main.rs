@@ -8,6 +8,7 @@ mod app;
 mod model;
 mod parser;
 mod renderer;
+mod settings;
 mod texture_loader;
 mod ui;
 
@@ -19,7 +20,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_title("MDLVis-RS - Warcraft 3 Model Viewer")
         .with_inner_size(winit::dpi::LogicalSize::new(1200.0, 800.0)))?;
 
-    let mut app = pollster::block_on(app::App::new(window))?;
+    // Create tokio runtime for async texture loading
+    let rt = tokio::runtime::Runtime::new()?;
+    let mut app = rt.block_on(app::App::new(window))?;
 
     event_loop.run(move |event, elwt| {
         elwt.set_control_flow(ControlFlow::Poll);

@@ -8,6 +8,7 @@ use egui_wgpu::ScreenDescriptor;
 struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],
+    uv: [f32; 2],
 }
 
 impl Vertex {
@@ -25,6 +26,11 @@ impl Vertex {
                     offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     shader_location: 1,
                     format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: (std::mem::size_of::<[f32; 3]>() * 2) as wgpu::BufferAddress,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x2,
                 },
             ],
         }
@@ -59,28 +65,47 @@ impl LineVertex {
     }
 }
 
+#[derive(Debug)]
+struct GeosetRenderInfo {
+    index_start: u32,
+    index_count: u32,
+    material_id: Option<usize>,
+}
+
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     render_pipeline: wgpu::RenderPipeline,
+    wireframe_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
+    geosets: Vec<GeosetRenderInfo>,
+    materials: Vec<crate::model::Material>,
+    textures: Vec<crate::model::Texture>,
     line_vertex_buffer: wgpu::Buffer,
     num_lines: u32,
     skeleton_vertex_buffer: wgpu::Buffer,
     num_skeleton_lines: u32,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    texture_bind_group: wgpu::BindGroup,
+    team_color_bind_group: wgpu::BindGroup,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+    team_color: [f32; 3],
     camera_yaw: f32,
     camera_pitch: f32,
     camera_distance: f32,
+    default_camera_yaw: f32,
+    default_camera_pitch: f32,
+    default_camera_distance: f32,
     model_center: [f32; 3],
     egui_renderer: egui_wgpu::Renderer,
     egui_ctx: egui::Context,
+    view_proj_matrix: nalgebra_glm::Mat4,
 }
 
 impl Renderer {
@@ -108,7 +133,7 @@ impl Renderer {
 
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::empty(),
+                required_features: wgpu::Features::POLYGON_MODE_LINE, // Required for wireframe mode
                 required_limits: wgpu::Limits::default(),
                 label: None,
                 memory_hints: wgpu::MemoryHints::default(),
@@ -185,8 +210,154 @@ impl Renderer {
             }],
         });
 
+        // Create default white 1x1 texture
+        let texture_size = wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        };
+        
+        let diffuse_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Default White Texture"),
+            size: texture_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        
+        // Write white pixel data
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &diffuse_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[255, 255, 255, 255], // RGBA white
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            texture_size,
+        );
+        
+        let diffuse_texture_view = diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Default Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        
+        // Create texture bind group layout
+        let texture_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Texture Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        
+        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Texture Bind Group"),
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
+                },
+            ],
+        });
+
+        // Create team color texture (red by default)
+        let team_color_data = [255u8, 0, 0, 255]; // RGBA red
+        let team_color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Team Color Texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &team_color_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &team_color_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let team_color_texture_view = team_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        
+        let team_color_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Team Color Bind Group"),
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&team_color_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
+                },
+            ],
+        });
+
         let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
+            bind_group_layouts: &[&camera_bind_group_layout, &texture_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        // Create separate layout for lines (no textures)
+        let line_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Line Pipeline Layout"),
             bind_group_layouts: &[&camera_bind_group_layout],
             push_constant_ranges: &[],
         });
@@ -235,10 +406,55 @@ impl Renderer {
             cache: None,
         });
 
+        // Wireframe pipeline - same as render pipeline but with Line mode
+        let wireframe_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Wireframe Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::desc()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Line, // Wireframe mode!
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         // Create line rendering pipeline
         let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Line Pipeline"),
-            layout: Some(&render_pipeline_layout),
+            layout: Some(&line_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_line"),
@@ -349,22 +565,34 @@ impl Renderer {
             queue,
             config,
             render_pipeline,
+            wireframe_pipeline,
             line_pipeline,
             vertex_buffer,
             index_buffer,
             num_indices: 0,
+            geosets: Vec::new(),
+            materials: Vec::new(),
+            textures: Vec::new(),
             line_vertex_buffer,
             num_lines,
             skeleton_vertex_buffer,
             num_skeleton_lines: 0,
             camera_buffer,
             camera_bind_group,
-            camera_yaw: std::f32::consts::PI * 1.25, // 225 degrees - front-right view
-            camera_pitch: std::f32::consts::PI * 0.15, // 27 degrees - look slightly up
+            texture_bind_group,
+            team_color_bind_group,
+            texture_bind_group_layout,
+            team_color: [1.0, 0.0, 0.0], // Red by default
+            camera_yaw: 0.0, // 0 degrees - front view
+            camera_pitch: std::f32::consts::PI * 0.15, // 27 degrees - look slightly down at model
             camera_distance: 200.0,
+            default_camera_yaw: 0.0,
+            default_camera_pitch: std::f32::consts::PI * 0.15,
+            default_camera_distance: 200.0,
             model_center: [0.0, 0.0, 0.0],
             egui_renderer,
             egui_ctx,
+            view_proj_matrix: nalgebra_glm::Mat4::identity(),
         })
     }
 
@@ -380,10 +608,10 @@ impl Renderer {
         self.egui_ctx.clone()
     }
 
-    pub fn render(&mut self, _paint_jobs: Vec<egui::ClippedPrimitive>, _textures_delta: egui::TexturesDelta, _screen_descriptor: ScreenDescriptor) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, show_skeleton: bool, show_grid: bool, wireframe_mode: bool, far_plane: f32, _paint_jobs: Vec<egui::ClippedPrimitive>, _textures_delta: egui::TexturesDelta, _screen_descriptor: ScreenDescriptor) -> Result<(), wgpu::SurfaceError> {
         // Update camera matrix
         let aspect = self.config.width as f32 / self.config.height as f32;
-        let proj = nalgebra_glm::perspective(aspect, 45.0_f32.to_radians(), 0.1, 1000.0);
+        let proj = nalgebra_glm::perspective(aspect, 45.0_f32.to_radians(), 0.1, far_plane);
         
         let eye = nalgebra_glm::vec3(
             self.model_center[0] + self.camera_distance * self.camera_yaw.cos() * self.camera_pitch.cos(),
@@ -395,6 +623,7 @@ impl Renderer {
         let view = nalgebra_glm::look_at(&eye, &center, &up);
         
         let view_proj = proj * view;
+        self.view_proj_matrix = view_proj; // Store for axis label projection
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(view_proj.as_slice()));
 
         let output = self.surface.get_current_texture()?;
@@ -428,9 +657,9 @@ impl Renderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.8,
-                            g: 0.8,
-                            b: 0.8,
+                            r: 0.6,
+                            g: 0.7,
+                            b: 0.85,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -450,22 +679,64 @@ impl Renderer {
             });
 
             // Draw axes and grid first
-            render_pass.set_pipeline(&self.line_pipeline);
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
-            render_pass.draw(0..self.num_lines, 0..1);
+            if show_grid {
+                render_pass.set_pipeline(&self.line_pipeline);
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
+                render_pass.draw(0..self.num_lines, 0..1);
+            }
 
-            // Draw model
+            // Draw model - each geoset with its own texture
             if self.num_indices > 0 {
-                render_pass.set_pipeline(&self.render_pipeline);
+                let pipeline = if wireframe_mode {
+                    &self.wireframe_pipeline
+                } else {
+                    &self.render_pipeline
+                };
+                render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+                
+                // Draw each geoset with appropriate texture
+                for geoset in &self.geosets {
+                    // Determine which texture to use
+                    let bind_group = if let Some(mat_id) = geoset.material_id {
+                        if mat_id < self.materials.len() {
+                            let material = &self.materials[mat_id];
+                            if let Some(layer) = material.layers.first() {
+                                if let Some(tex_id) = layer.texture_id {
+                                    if tex_id < self.textures.len() {
+                                        let texture = &self.textures[tex_id];
+                                        // Use team color for replaceable textures
+                                        if texture.replaceable_id == 1 || texture.replaceable_id == 2 {
+                                            &self.team_color_bind_group
+                                        } else {
+                                            &self.texture_bind_group
+                                        }
+                                    } else {
+                                        &self.texture_bind_group
+                                    }
+                                } else {
+                                    &self.texture_bind_group
+                                }
+                            } else {
+                                &self.texture_bind_group
+                            }
+                        } else {
+                            &self.texture_bind_group
+                        }
+                    } else {
+                        &self.texture_bind_group
+                    };
+                    
+                    render_pass.set_bind_group(1, bind_group, &[]);
+                    render_pass.draw_indexed(geoset.index_start..(geoset.index_start + geoset.index_count), 0, 0..1);
+                }
             }
             
             // Draw skeleton on top (always visible)
-            if self.num_skeleton_lines > 0 {
+            if show_skeleton && self.num_skeleton_lines > 0 {
                 render_pass.set_pipeline(&self.line_pipeline);
                 render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, self.skeleton_vertex_buffer.slice(..));
@@ -528,17 +799,30 @@ impl Renderer {
         
         let mut all_vertices: Vec<Vertex> = Vec::new();
         let mut all_indices: Vec<u16> = Vec::new();
+        let mut geosets_info: Vec<GeosetRenderInfo> = Vec::new();
         
         for (geoset_idx, geoset) in model.geosets.iter().enumerate() {
             let vertex_offset = all_vertices.len() as u32;
+            let index_start = all_indices.len() as u32;
             
-            // Add vertices from this geoset
-            let vertices: Vec<Vertex> = geoset.vertices.iter().zip(&geoset.normals).map(|(v, n)| Vertex {
-                position: v.position,
-                normal: n.normal,
-            }).collect();
-            
-            all_vertices.extend(vertices);
+            // Add vertices from this geoset with UV coordinates
+            for i in 0..geoset.vertices.len() {
+                let uv = if i < geoset.tex_coords.len() {
+                    geoset.tex_coords[i].uv
+                } else {
+                    [0.0, 0.0] // Default UV if not available
+                };
+                
+                all_vertices.push(Vertex {
+                    position: geoset.vertices[i].position,
+                    normal: if i < geoset.normals.len() {
+                        geoset.normals[i].normal
+                    } else {
+                        [0.0, 0.0, 1.0] // Default normal
+                    },
+                    uv,
+                });
+            }
             
             // Add indices from this geoset, offsetting by current vertex count
             for face in &geoset.faces {
@@ -547,9 +831,21 @@ impl Renderer {
                 }
             }
             
-            println!("  Geoset {}: added {} vertices, {} faces", 
-                geoset_idx, geoset.vertices.len(), geoset.faces.len());
+            let index_count = (all_indices.len() as u32) - index_start;
+            
+            geosets_info.push(GeosetRenderInfo {
+                index_start,
+                index_count,
+                material_id: geoset.material_id,
+            });
+            
+            println!("  Geoset {}: added {} vertices, {} UVs, {} faces, material_id: {:?}", 
+                geoset_idx, geoset.vertices.len(), geoset.tex_coords.len(), geoset.faces.len(), geoset.material_id);
         }
+
+        self.geosets = geosets_info;
+        self.materials = model.materials.clone();
+        self.textures = model.textures.clone();
 
         // Calculate bounding box to understand model position
         if !all_vertices.is_empty() {
@@ -674,5 +970,243 @@ impl Renderer {
     pub fn zoom_camera(&mut self, delta: f32) {
         self.camera_distance -= delta * 10.0;
         self.camera_distance = self.camera_distance.clamp(10.0, 1000.0);
+    }
+
+    pub fn reset_camera(&mut self) {
+        self.camera_yaw = self.default_camera_yaw;
+        self.camera_pitch = self.default_camera_pitch;
+        self.camera_distance = self.default_camera_distance;
+    }
+
+    pub fn get_team_color(&self) -> [f32; 3] {
+        self.team_color
+    }
+
+    pub fn set_team_color(&mut self, color: [f32; 3]) {
+        self.team_color = color;
+        
+        // Update team color texture
+        let color_data = [
+            (color[0] * 255.0) as u8,
+            (color[1] * 255.0) as u8,
+            (color[2] * 255.0) as u8,
+            255u8,
+        ];
+        
+        let team_color_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Team Color Texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &team_color_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &color_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let team_color_texture_view = team_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        
+        // Get sampler from existing bind group (reuse the same sampler)
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        
+        self.team_color_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Team Color Bind Group"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&team_color_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+    }
+
+    /// Project a 3D world position to 2D screen coordinates
+    /// Returns None if behind camera or outside viewport with margin
+    pub fn project_to_screen(&self, world_pos: [f32; 3]) -> Option<[f32; 2]> {
+        let point = nalgebra_glm::vec4(world_pos[0], world_pos[1], world_pos[2], 1.0);
+        let clip_space = self.view_proj_matrix * point;
+        
+        // Perspective divide
+        if clip_space.w <= 0.0 {
+            return None; // Behind camera
+        }
+        
+        let ndc = nalgebra_glm::vec3(
+            clip_space.x / clip_space.w,
+            clip_space.y / clip_space.w,
+            clip_space.z / clip_space.w,
+        );
+        
+        // Check if in NDC bounds (strict check - must be fully on screen)
+        if ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 {
+            return None;
+        }
+        
+        // Convert to screen coordinates
+        let screen_x = (ndc.x + 1.0) * 0.5 * self.config.width as f32;
+        let screen_y = (1.0 - ndc.y) * 0.5 * self.config.height as f32; // Flip Y
+        
+        Some([screen_x, screen_y])
+    }
+
+    pub fn get_viewport_size(&self) -> [u32; 2] {
+        [self.config.width, self.config.height]
+    }
+
+    /// Get screen positions for axis labels
+    /// Returns (X_pos, Y_pos, Z_pos) or None if off-screen
+    pub fn get_axis_label_positions(&self) -> (Option<[f32; 2]>, Option<[f32; 2]>, Option<[f32; 2]>) {
+        // Calculate current view_proj matrix (not using cached one to avoid one-frame lag)
+        let aspect = self.config.width as f32 / self.config.height as f32;
+        let proj = nalgebra_glm::perspective(aspect, 45.0_f32.to_radians(), 0.1, 1000.0);
+        
+        let eye = nalgebra_glm::vec3(
+            self.model_center[0] + self.camera_distance * self.camera_yaw.cos() * self.camera_pitch.cos(),
+            self.model_center[1] + self.camera_distance * self.camera_yaw.sin() * self.camera_pitch.cos(),
+            self.model_center[2] + self.camera_distance * self.camera_pitch.sin(),
+        );
+        let center = nalgebra_glm::vec3(self.model_center[0], self.model_center[1], self.model_center[2]);
+        let up = nalgebra_glm::vec3(0.0, 0.0, 1.0);
+        let view = nalgebra_glm::look_at(&eye, &center, &up);
+        let view_proj = proj * view;
+        
+        // Project axis endpoints relative to model center
+        let axis_length = 150.0;
+        let x_end = [self.model_center[0] + axis_length, self.model_center[1], self.model_center[2]];
+        let y_end = [self.model_center[0], self.model_center[1] + axis_length, self.model_center[2]];
+        let z_end = [self.model_center[0], self.model_center[1], self.model_center[2] + axis_length];
+        
+        let project = |world_pos: [f32; 3]| -> Option<[f32; 2]> {
+            let point = nalgebra_glm::vec4(world_pos[0], world_pos[1], world_pos[2], 1.0);
+            let clip_space = view_proj * point;
+            
+            if clip_space.w <= 0.0 {
+                return None;
+            }
+            
+            let ndc = nalgebra_glm::vec3(
+                clip_space.x / clip_space.w,
+                clip_space.y / clip_space.w,
+                clip_space.z / clip_space.w,
+            );
+            
+            if ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 {
+                return None;
+            }
+            
+            let screen_x = (ndc.x + 1.0) * 0.5 * self.config.width as f32;
+            let screen_y = (1.0 - ndc.y) * 0.5 * self.config.height as f32;
+            
+            Some([screen_x, screen_y])
+        };
+        
+        (
+            project(x_end),
+            project(y_end),
+            project(z_end),
+        )
+    }
+    
+    /// Load texture from RGBA data and update texture bind group
+    pub fn load_texture_from_rgba(&mut self, rgba_data: &[u8], width: u32, height: u32) {
+        let texture_size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Loaded Texture"),
+            size: texture_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            rgba_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            texture_size,
+        );
+        
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Texture Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        
+        // Recreate texture bind group with new texture
+        self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Texture Bind Group"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+        
+        println!("Loaded texture: {}x{}", width, height);
     }
 }
