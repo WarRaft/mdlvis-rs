@@ -79,10 +79,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let is_team_glow = material.material_type_and_wireframe.z > 0.5;
         
         if (is_team_glow) {
-            // Team Glow (ReplaceableID=2): white texture with alpha pattern
-            // Multiply team color by alpha to get glow intensity
-            let glow_rgb = team_color * tex_color.a;
-            tex_color = vec4<f32>(glow_rgb.x, glow_rgb.y, glow_rgb.z, tex_color.a);
+            // Team Glow (ReplaceableID=2): pre-multiplied alpha texture
+            // Texture RGB is already white * alpha, so we need to "un-premultiply" and multiply by team_color
+            // final_color = team_color * (texture.rgb / texture.a) * texture.a = team_color * texture.rgb
+            if (tex_color.a > 0.001) {
+                // Un-premultiply to get white (should be ~1,1,1), then multiply by team color
+                let white_intensity = tex_color.rgb / tex_color.a;
+                let glow_rgb = team_color * white_intensity * tex_color.a;
+                tex_color = vec4<f32>(glow_rgb, tex_color.a);
+            } else {
+                tex_color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+            }
         } else {
             // Regular Team Color (ReplaceableID=1): blend team color with texture using alpha
             // Where alpha=0: show team_color, where alpha=1: show texture

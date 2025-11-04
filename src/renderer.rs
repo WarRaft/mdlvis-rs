@@ -1836,15 +1836,15 @@ impl Renderer {
             1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1
         ];
         
-        // Create RGBA texture: white color with varying alpha
-        // Delphi creates pre-multiplied texture, but we can't do that since team_color changes
-        // Instead, we create white texture and multiply by team_color in shader
+        // Create RGBA texture with pre-multiplied alpha to avoid filtering artifacts
+        // This matches Delphi implementation: RGB = white * (alpha/255)
         let mut rgba_data = Vec::with_capacity(32 * 32 * 4);
         for alpha_byte in &TEAM_GLOW_ALPHA {
             let alpha = (*alpha_byte as f32 / 127.0 * 255.0) as u8; // Scale 0-127 to 0-255
-            rgba_data.push(255); // R - white
-            rgba_data.push(255); // G - white  
-            rgba_data.push(255); // B - white
+            // Pre-multiply: RGB = white * (alpha/255) to prevent visible edges during filtering
+            rgba_data.push(alpha); // R - pre-multiplied
+            rgba_data.push(alpha); // G - pre-multiplied
+            rgba_data.push(alpha); // B - pre-multiplied
             rgba_data.push(alpha); // A - from map
         }
         
