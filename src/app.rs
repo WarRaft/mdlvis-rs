@@ -31,6 +31,7 @@ pub struct App {
     pending_model_path: Option<String>, // Path to model that should be loaded
     renderer: Renderer,
     camera_controller: CameraController,
+    animation_system: crate::animation::AnimationSystem,
     current_cursor_pos: Option<(f64, f64)>,
     egui_state: egui_winit::State,
     egui_wants_pointer: bool, // Track if egui is using the pointer
@@ -93,6 +94,7 @@ impl App {
             pending_model_path: None,
             renderer,
             camera_controller,
+            animation_system: crate::animation::AnimationSystem::new(),
             current_cursor_pos: None,
             egui_state,
             egui_wants_pointer: false,
@@ -143,6 +145,13 @@ impl App {
                 self.renderer.resize(*size);
             }
             winit::event::WindowEvent::MouseInput { state, button, .. } => {
+                // Don't handle mouse input if egui wants the pointer
+                if self.egui_wants_pointer {
+                    return EventResponse {
+                        repaint: egui_response.repaint,
+                        exit: false,
+                    };
+                }
                 let is_pressed = *state == winit::event::ElementState::Pressed;
                 self.camera_controller.on_mouse_button(*button, is_pressed);
             }
@@ -153,11 +162,25 @@ impl App {
                 self.camera_controller.on_modifiers(shift, alt, control);
             }
             winit::event::WindowEvent::CursorMoved { position, .. } => {
+                // Don't handle mouse movement if egui wants the pointer
+                if self.egui_wants_pointer {
+                    return EventResponse {
+                        repaint: egui_response.repaint,
+                        exit: false,
+                    };
+                }
                 self.current_cursor_pos = Some((position.x, position.y));
                 self.camera_controller
                     .on_mouse_move((position.x, position.y));
             }
             winit::event::WindowEvent::MouseWheel { delta, .. } => {
+                // Don't handle mouse wheel if egui wants the pointer
+                if self.egui_wants_pointer {
+                    return EventResponse {
+                        repaint: egui_response.repaint,
+                        exit: false,
+                    };
+                }
                 match delta {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => {
                         // Real mouse wheel - simple zoom
@@ -177,6 +200,13 @@ impl App {
                 }
             }
             winit::event::WindowEvent::PanGesture { delta, phase, .. } => {
+                // Don't handle pan gesture if egui wants the pointer
+                if self.egui_wants_pointer {
+                    return EventResponse {
+                        repaint: egui_response.repaint,
+                        exit: false,
+                    };
+                }
                 // Two-finger swipe gesture - ONLY WAY to control camera with trackpad:
                 // - No modifiers: rotate around grid center (0,0,0)
                 // - Shift: pan (move target)
@@ -243,7 +273,7 @@ impl App {
         let (camera_yaw, camera_pitch) = self.renderer.camera.get_orientation();
 
         let mut reset_camera = false;
-        let mut panel_width = 0.0; // No left panel anymore
+        let mut current_frame = 0.0;
         let mut show_geosets = Vec::new();
         let mut colors_changed = false;
         let mut open_model = false;
@@ -252,7 +282,7 @@ impl App {
         let full_output = egui_ctx.run(raw_input, |ctx| {
             (
                 reset_camera,
-                panel_width,
+                current_frame,
                 show_geosets,
                 colors_changed,
                 open_model,
@@ -327,6 +357,13 @@ impl App {
         let wireframe_mode = self.settings.display.wireframe_mode;
         let far_plane = self.settings.display.far_plane;
 
+        // Update animation if model is loaded
+        if self.model.is_some() && !self.animation_system.bone_states.is_empty() {
+            self.animation_system.update(current_frame);
+            // Apply animation to vertex buffer
+            self.renderer.update_animation(&self.animation_system);
+        }
+
         // Sync camera state to renderer
         self.renderer.camera = self.camera_controller.state().clone();
 
@@ -336,7 +373,7 @@ impl App {
             show_bounding_box,
             wireframe_mode,
             far_plane,
-            panel_width,
+            current_frame,
             &show_geosets,
             paint_jobs,
             full_output.textures_delta,
@@ -479,7 +516,14 @@ impl App {
             });
         }
 
-        self.model = Some(model);
+        self.model = Some(model.clone());
+        
+        // Initialize animation system with bones
+        self.animation_system.init_from_model(&model);
+        
+        // Reset animation state for new model
+        self.ui.reset_animation(&self.model);
+        
         println!("Model loaded successfully");
 
         Ok(())

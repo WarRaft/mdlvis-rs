@@ -5,7 +5,6 @@ const TEXTURE_BASE_URL: &str = "https://github.com/WarRaft/War3.mpq/raw/refs/hea
 
 /// Load texture from local file
 pub async fn load_from_file(path: &Path) -> Result<Vec<u8>, MdlError> {
-    println!("Loading texture from file: {}", path.display());
     let data = tokio::fs::read(path).await?;
     Ok(data)
 }
@@ -19,8 +18,6 @@ pub async fn download_texture(path: &str) -> Result<Vec<u8>, MdlError> {
     let normalized_path = normalized_path.trim_start_matches('/');
     
     let url = format!("{}/{}", TEXTURE_BASE_URL, normalized_path);
-    
-    println!("Downloading texture from: {}", url);
     
     // Use async HTTP client
     let response = reqwest::get(&url).await.map_err(|e| {
@@ -67,16 +64,14 @@ pub async fn load_texture_with_fallback(
     if let Some(path) = local_path {
         match load_from_file(path).await {
             Ok(data) => {
-                println!("Loaded texture from local file");
                 return decode_blp(&data);
             }
-            Err(e) => {
-                println!("Failed to load from local file: {}, trying remote", e);
+            Err(_e) => {
+                // Failed to load from local file, trying remote
             }
         }
     }
 
     // Fallback to remote download
-    println!("Loading texture from remote repository");
     load_texture(filename).await
 }

@@ -56,6 +56,8 @@ pub struct Renderer {
     egui_renderer: egui_wgpu::Renderer,
     egui_ctx: egui::Context,
     view_proj_matrix: nalgebra_glm::Mat4,
+    // Store original vertices for animation
+    original_vertices: Vec<Vertex>,
 }
 
 impl Renderer {
@@ -898,6 +900,7 @@ impl Renderer {
             egui_renderer,
             egui_ctx,
             view_proj_matrix: nalgebra_glm::Mat4::identity(),
+            original_vertices: Vec::new(),
         })
     }
 
@@ -920,15 +923,14 @@ impl Renderer {
         show_bounding_box: bool,
         wireframe_mode: bool,
         far_plane: f32,
-        panel_width: f32,
+        _current_frame: f32, // Will be used for bone animation later
         show_geosets: &Vec<bool>,
         _paint_jobs: Vec<egui::ClippedPrimitive>,
         _textures_delta: egui::TexturesDelta,
         _screen_descriptor: ScreenDescriptor,
     ) -> Result<(), wgpu::SurfaceError> {
-        // Calculate viewport dimensions (excluding left panel)
-        let panel_width_pixels = panel_width * _screen_descriptor.pixels_per_point;
-        let viewport_width = self.config.width as f32 - panel_width_pixels;
+        // Calculate viewport dimensions (no left panel anymore)
+        let viewport_width = self.config.width as f32;
         let viewport_height = self.config.height as f32;
 
         // Update camera matrix with correct aspect ratio for viewport
@@ -1046,9 +1048,9 @@ impl Renderer {
                 timestamp_writes: None,
             });
 
-            // Set viewport and scissor to render only in area not covered by left panel
+            // Set viewport and scissor for full screen (no left panel)
             render_pass.set_viewport(
-                panel_width_pixels,
+                0.0,
                 0.0,
                 viewport_width,
                 viewport_height,
@@ -1057,7 +1059,7 @@ impl Renderer {
             );
 
             render_pass.set_scissor_rect(
-                panel_width_pixels as u32,
+                0,
                 0,
                 viewport_width as u32,
                 viewport_height as u32,
@@ -1430,12 +1432,15 @@ impl Renderer {
             all_indices.len() / 3
         );
 
+        // Store original vertices for animation
+        self.original_vertices = all_vertices.clone();
+
         self.vertex_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
                 contents: bytemuck::cast_slice(&all_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
         self.index_buffer = self
@@ -1651,6 +1656,42 @@ impl Renderer {
             self.num_bounding_box_lines = 0;
             println!("No valid bounding boxes found in geosets");
         }
+    }
+    
+    /// Update vertex buffer with animated vertices
+    pub fn update_animation(&mut self, animation_system: &crate::animation::AnimationSystem) {
+        if self.original_vertices.is_empty() || animation_system.bone_states.is_empty() {
+            return;
+        }
+
+        // For now, apply first bone's rotation to all vertices (TEST)
+        let bone = &animation_system.bone_states[0];
+        
+        let mut transformed_vertices = self.original_vertices.clone();
+        
+        // Use model center as pivot point for test
+        let pivot = nalgebra_glm::vec3(self.model_center[0], self.model_center[1], self.model_center[2]);
+        
+        for vertex in &mut transformed_vertices {
+            // Transform vertex position around model center
+            let pos = nalgebra_glm::vec3(vertex.position[0], vertex.position[1], vertex.position[2]);
+            let rel = pos - pivot;
+            let transformed = pivot + bone.abs_matrix * rel;
+            
+            vertex.position = [transformed.x, transformed.y, transformed.z];
+            
+            // Transform normal
+            let normal = nalgebra_glm::vec3(vertex.normal[0], vertex.normal[1], vertex.normal[2]);
+            let transformed_normal = bone.abs_matrix * normal;
+            vertex.normal = [transformed_normal.x, transformed_normal.y, transformed_normal.z];
+        }
+
+        // Update GPU buffer
+        self.queue.write_buffer(
+            &self.vertex_buffer,
+            0,
+            bytemuck::cast_slice(&transformed_vertices),
+        );
     }
     
     pub fn update_colors(&mut self, settings: &crate::settings::Settings, model: Option<&Model>) {

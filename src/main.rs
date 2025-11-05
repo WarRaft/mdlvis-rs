@@ -7,6 +7,7 @@ use winit::{
 };
 
 mod app;
+mod animation;
 mod error;
 mod material_system;
 mod model;

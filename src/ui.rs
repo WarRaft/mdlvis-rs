@@ -4,8 +4,11 @@ use crate::settings::Settings;
 pub struct Ui {
     show_geosets: Vec<bool>,
     selected_sequence: usize,
-    animation_time: f32,
+    current_frame: f32,
     is_playing: bool,
+    is_looping: bool,
+    last_update_time: f64,
+    last_frame_time: f64, // Time when we last processed a frame (to prevent multiple updates per frame)
 }
 
 impl Ui {
@@ -13,8 +16,30 @@ impl Ui {
         Self {
             show_geosets: Vec::new(),
             selected_sequence: 0,
-            animation_time: 0.0,
+            current_frame: 0.0,
             is_playing: false,
+            is_looping: true,
+            last_update_time: 0.0,
+            last_frame_time: 0.0,
+        }
+    }
+
+    /// Reset animation state when a new model is loaded
+    pub fn reset_animation(&mut self, model: &Option<Model>) {
+        self.selected_sequence = 0;
+        self.is_playing = false;
+        self.last_update_time = 0.0;
+        self.last_frame_time = 0.0;
+        
+        // Set current_frame to start of first sequence if model has animations
+        if let Some(model) = model {
+            if !model.sequences.is_empty() {
+                self.current_frame = model.sequences[0].start_frame as f32;
+            } else {
+                self.current_frame = 0.0;
+            }
+        } else {
+            self.current_frame = 0.0;
         }
     }
 
@@ -30,6 +55,53 @@ impl Ui {
         let mut reset_camera = false;
         let mut colors_changed = false;
         let mut open_model = false;
+
+        // Update animation if playing (ONCE per frame)
+        let current_time = ctx.input(|i| i.time);
+        
+        if self.is_playing {
+            // Check if this is a new frame (prevent multiple updates per frame)
+            if (current_time - self.last_frame_time).abs() > 0.0001 {
+                self.last_frame_time = current_time;
+                
+                if let Some(model) = model {
+                    if !model.sequences.is_empty() && self.selected_sequence < model.sequences.len() {
+                        let seq = &model.sequences[self.selected_sequence];
+                        
+                        // Initialize timer on first frame
+                        if self.last_update_time == 0.0 {
+                            self.last_update_time = current_time;
+                        } else {
+                            // Update animation
+                            let delta_time = (current_time - self.last_update_time) as f32;
+                            self.last_update_time = current_time;
+                            
+                            // 30 FPS for Warcraft III animations
+                            self.current_frame += delta_time * 30.0;
+                            
+                            let start = seq.start_frame as f32;
+                            let end = seq.end_frame as f32;
+                            
+                            // Handle end of animation
+                            if self.current_frame > end {
+                                if self.is_looping {
+                                    // Loop regardless of sequence flag - user control takes priority
+                                    self.current_frame = start;
+                                } else {
+                                    // Stop at end
+                                    self.current_frame = end;
+                                    self.is_playing = false;
+                                    self.last_update_time = 0.0;
+                                }
+                            }
+                        }
+                        
+                        // Request continuous repaint while playing
+                        ctx.request_repaint();
+                    }
+                }
+            }
+        }
 
         // Main menu bar at the top
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
@@ -104,8 +176,8 @@ impl Ui {
             self.show_animation_window(ctx, model, &mut settings.ui);
         }
 
-        // Draw axis gizmo in bottom-right corner
-        let gizmo_size = 80.0;
+        // Draw axis gizmo in bottom-right corner (Blender-style)
+        let gizmo_size = 100.0;
         let gizmo_margin = 20.0;
 
         // Get screen size - use available_rect which gives actual rendering area
@@ -115,7 +187,8 @@ impl Ui {
         let gizmo_x = screen_rect.max.x - gizmo_size - gizmo_margin;
         let gizmo_y = screen_rect.max.y - gizmo_size - gizmo_margin;
         let center = egui::pos2(gizmo_x + gizmo_size / 2.0, gizmo_y + gizmo_size / 2.0);
-        let radius = gizmo_size / 2.5;
+        let radius = gizmo_size / 2.8;
+        let circle_radius = 11.0; // Radius of circles at axis ends
 
         // Calculate axis directions based on camera orientation
         let x_angle = -camera_yaw;
@@ -134,18 +207,18 @@ impl Ui {
             egui::Order::Foreground,
             egui::Id::new("axis_gizmo_painter"),
         ));
-        let font_id = egui::FontId::proportional(16.0);
+        let font_id = egui::FontId::proportional(14.0);
 
-        // Draw circle background
+        // Draw circle background with darker, more professional look
         painter.circle_filled(
             center,
             gizmo_size / 2.0,
-            egui::Color32::from_rgba_premultiplied(30, 30, 30, 200),
+            egui::Color32::from_rgba_premultiplied(40, 40, 42, 220),
         );
         painter.circle_stroke(
             center,
             gizmo_size / 2.0,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(100)),
+            egui::Stroke::new(1.5, egui::Color32::from_gray(70)),
         );
 
         // Calculate depth
@@ -153,38 +226,54 @@ impl Ui {
         let y_depth = (-camera_yaw - std::f32::consts::FRAC_PI_2).sin();
         let z_depth = camera_pitch.sin();
 
-        // Sort and draw axes
+        // Blender-style colors (more saturated)
+        let x_color = egui::Color32::from_rgb(220, 38, 38); // Bright red
+        let y_color = egui::Color32::from_rgb(102, 204, 102); // Bright green
+        let z_color = egui::Color32::from_rgb(64, 128, 255); // Bright blue
+
+        // Sort and draw axes (back to front)
         let mut axes = vec![
-            (x_depth, egui::Color32::from_rgb(255, 80, 80), x_end, "X"),
-            (y_depth, egui::Color32::from_rgb(80, 255, 80), y_end, "Y"),
-            (z_depth, egui::Color32::from_rgb(100, 150, 255), z_end, "Z"),
+            (x_depth, x_color, x_end, "X"),
+            (y_depth, y_color, y_end, "Y"),
+            (z_depth, z_color, z_end, "Z"),
         ];
         axes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
         for (depth, color, end, label) in axes {
             if depth > 0.0 {
-                painter.line_segment([center, end], egui::Stroke::new(3.0, color));
+                // Front-facing axis - bright and bold
+                // Draw line with gradient effect (thicker at base)
+                painter.line_segment([center, end], egui::Stroke::new(3.5, color));
+                
+                // Draw circle at the end
+                painter.circle_filled(end, circle_radius, color);
+                
+                // Draw label in white on the circle
                 painter.text(
                     end,
                     egui::Align2::CENTER_CENTER,
                     label,
                     font_id.clone(),
-                    color,
+                    egui::Color32::WHITE,
                 );
             } else {
+                // Back-facing axis - darker and thinner
                 let darker = egui::Color32::from_rgba_premultiplied(
-                    (color.r() as f32 * 0.3) as u8,
-                    (color.g() as f32 * 0.3) as u8,
-                    (color.b() as f32 * 0.3) as u8,
-                    150,
+                    (color.r() as f32 * 0.4) as u8,
+                    (color.g() as f32 * 0.4) as u8,
+                    (color.b() as f32 * 0.4) as u8,
+                    180,
                 );
                 painter.line_segment([center, end], egui::Stroke::new(2.0, darker));
+                
+                // Draw smaller circle at the end
+                painter.circle_filled(end, circle_radius * 0.7, darker);
             }
         }
 
         (
             reset_camera,
-            0.0, // No panel width anymore
+            self.current_frame,
             self.show_geosets.clone(),
             colors_changed,
             open_model,
@@ -424,40 +513,131 @@ impl Ui {
         ui_settings: &mut crate::settings::UiSettings,
     ) {
         egui::Window::new("🎬 Animation")
-            .default_width(300.0)
+            .default_width(350.0)
+            .default_height(500.0)
             .resizable(true)
             .open(&mut ui_settings.show_animation)
             .show(ctx, |ui| {
                 if let Some(model) = model {
                     if !model.sequences.is_empty() {
-                        egui::ComboBox::from_label("Sequence")
-                            .selected_text(&model.sequences[self.selected_sequence].name)
-                            .show_ui(ui, |ui| {
-                                for (i, seq) in model.sequences.iter().enumerate() {
-                                    ui.selectable_value(&mut self.selected_sequence, i, &seq.name);
+                        ui.horizontal(|ui| {
+                            ui.label("Sequences:");
+                            ui.separator();
+                            
+                            // Control buttons
+                            ui.add_enabled_ui(!self.is_playing, |ui| {
+                                if ui.button("▶ Play").clicked() {
+                                    self.is_playing = true;
+                                    
+                                    // Starting playback
+                                    if self.selected_sequence < model.sequences.len() {
+                                        let seq = &model.sequences[self.selected_sequence];
+                                        // Reset to start if out of range
+                                        if self.current_frame < seq.start_frame as f32 
+                                            || self.current_frame >= seq.end_frame as f32 {
+                                            self.current_frame = seq.start_frame as f32;
+                                        }
+                                    }
+                                    self.last_update_time = 0.0; // Will be initialized on next update
+                                    self.last_frame_time = 0.0; // RESET frame tracking too!
                                 }
                             });
-
-                        // Show sequence details
+                            
+                            ui.add_enabled_ui(self.is_playing, |ui| {
+                                if ui.button("⏸ Pause").clicked() {
+                                    self.is_playing = false;
+                                    self.last_update_time = 0.0; // Reset for resume
+                                }
+                            });
+                            
+                            // Stop is enabled if playing OR if frame is not at start
+                            let seq = &model.sequences[self.selected_sequence];
+                            let can_stop = self.is_playing || self.current_frame > seq.start_frame as f32;
+                            ui.add_enabled_ui(can_stop, |ui| {
+                                if ui.button("⏹ Stop").clicked() {
+                                    self.is_playing = false;
+                                    self.last_update_time = 0.0;
+                                    self.current_frame = seq.start_frame as f32;
+                                }
+                            });
+                            
+                            let loop_button = if self.is_looping { "🔁 Loop" } else { "➡ Once" };
+                            if ui.button(loop_button).clicked() {
+                                self.is_looping = !self.is_looping;
+                            }
+                        });
+                        
+                        ui.separator();
+                        
+                        // Sequences list - full width, flexible height
+                        ui.label("Animations:");
+                        let available_height = ui.available_height() - 200.0; // Reserve space for details below
+                        egui::ScrollArea::vertical()
+                            .max_height(available_height.max(150.0))
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.set_min_width(ui.available_width());
+                                for (i, seq) in model.sequences.iter().enumerate() {
+                                    let is_selected = i == self.selected_sequence;
+                                    let response = ui.selectable_label(is_selected, &seq.name);
+                                    
+                                    if response.clicked() {
+                                        self.selected_sequence = i;
+                                        self.current_frame = seq.start_frame as f32;
+                                        self.is_playing = false;
+                                        self.last_update_time = 0.0;
+                                    }
+                                }
+                            });
+                        
+                        ui.separator();
+                        
+                        // Show sequence details (without border)
                         let seq = &model.sequences[self.selected_sequence];
+                        ui.label(format!("Animation: {}", seq.name));
                         ui.label(format!("Frames: {} - {}", seq.start_frame, seq.end_frame));
                         ui.label(format!(
-                            "Duration: {} frames",
-                            seq.end_frame - seq.start_frame
+                            "Duration: {} frames ({:.1}s at 30fps)",
+                            seq.end_frame - seq.start_frame,
+                            (seq.end_frame - seq.start_frame) as f32 / 30.0
                         ));
-                        ui.label(format!("Non-looping: {}", seq.non_looping));
+                        
+                        // Show current state
+                        let state_text = if self.is_playing {
+                            format!("▶ Playing - Frame {:.0}", self.current_frame)
+                        } else {
+                            format!("⏸ Paused - Frame {:.0}", self.current_frame)
+                        };
+                        ui.label(egui::RichText::new(state_text).strong());
+                        
+                        if seq.non_looping {
+                            ui.label("⚠ Non-looping");
+                        }
+                        
                         if let Some(rarity) = seq.rarity {
                             ui.label(format!("Rarity: {}", rarity));
                         }
-
+                        
                         ui.separator();
-
+                        
+                        // Frame slider
                         ui.horizontal(|ui| {
-                            if ui.button(if self.is_playing { "⏸" } else { "▶" }).clicked() {
-                                self.is_playing = !self.is_playing;
+                            ui.label("Frame:");
+                            let frame_range = seq.start_frame as f32..=seq.end_frame as f32;
+                            let slider_response = ui.add(egui::Slider::new(&mut self.current_frame, frame_range)
+                                .integer()
+                            );
+                            
+                            // Only react to ACTUAL user interaction, not programmatic updates
+                            if slider_response.drag_started() {
+                                // User started dragging - pause animation
+                                self.is_playing = false;
+                                self.last_update_time = 0.0;
                             }
-                            ui.add(egui::Slider::new(&mut self.animation_time, 0.0..=1.0).text("Time"));
+                            
+                            ui.label(format!("{:.0}", self.current_frame));
                         });
+                        
                     } else {
                         ui.label("No animations in model");
                     }
