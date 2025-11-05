@@ -257,10 +257,15 @@ impl App {
                 TextureLoadResult::Error { texture_id, error } => {
                     eprintln!("Texture {} failed to load: {}", texture_id, error);
 
-                    // Update texture manager status to error
+                    // Update texture manager status to error ONLY if not already loaded
                     if let Some(texture_info) = self.texture_manager.get_texture_mut(texture_id) {
-                        texture_info.status = crate::texture::TextureStatus::ErrorLocal(error);
-                        texture_info.progress = 0.0;
+                        // Don't overwrite successful load with error from background task
+                        if !texture_info.is_loaded() {
+                            texture_info.status = crate::texture::TextureStatus::ErrorLocal(error);
+                            texture_info.progress = 0.0;
+                        } else {
+                            println!("Ignoring error for texture {} - already loaded successfully", texture_id);
+                        }
                     }
                 }
             }
@@ -487,10 +492,19 @@ impl App {
         }
 
         // Start background texture loading tasks for non-RID textures
+        // BUT: Skip textures that were found locally (they're already loading via start_texture_load)
         for (texture_id, texture) in model.textures.iter().enumerate() {
             // Skip all RID textures (replaceable_id > 0) - they are already created above
             if texture.replaceable_id > 0 {
                 continue;
+            }
+
+            // Skip textures that were found locally - they're already being loaded
+            if let Some(texture_info) = self.texture_manager.get_texture(texture_id) {
+                if texture_info.local_path.is_some() {
+                    println!("Skipping background load for texture {} - found locally", texture_id);
+                    continue;
+                }
             }
 
             let texture_path = texture.filename.clone();
@@ -501,10 +515,10 @@ impl App {
 
             let sender = self.texture_sender.clone();
 
-            // Spawn background task
+            // Spawn background task to download from internet
             tokio::spawn(async move {
                 println!(
-                    "Background loading texture {}: {}",
+                    "Background downloading texture {}: {}",
                     texture_id, texture_path
                 );
                 match crate::texture::load_texture(&texture_path).await {

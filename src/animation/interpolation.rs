@@ -28,11 +28,13 @@ pub fn quaternion_to_matrix(q: &glm::Quat) -> glm::Mat3 {
     // m[0,0]:=1.0-(yy+zz); m[1,0]:=xy-wz;       m[2,0]:=xz+wy;
     // m[0,1]:=xy+wz;       m[1,1]:=1.0-(xx+zz); m[2,1]:=yz-wx;
     // m[0,2]:=xz-wy;       m[1,2]:=yz+wx;       m[2,2]:=1.0-(xx+yy);
+    // Delphi uses row-major [row,col], but glm::mat3 is column-major
+    // So we need to transpose the matrix (swap rows and columns)
     
     glm::mat3(
-        1.0 - (yy + zz), xy + wz,         xz - wy,
-        xy - wz,         1.0 - (xx + zz), yz + wx,
-        xz + wy,         yz - wx,         1.0 - (xx + yy),
+        1.0 - (yy + zz), xy - wz,         xz + wy,         // column 0 (was row 0)
+        xy + wz,         1.0 - (xx + zz), yz - wx,         // column 1 (was row 1)
+        xz - wy,         yz + wx,         1.0 - (xx + yy), // column 2 (was row 2)
     )
 }
 
