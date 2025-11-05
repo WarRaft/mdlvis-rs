@@ -51,7 +51,7 @@ pub struct Renderer {
     grid_major_color: [f32; 3],
     grid_minor_color: [f32; 3],
     skybox_color: [f32; 3],
-    camera: CameraState,
+    pub(crate) camera: CameraState,
     model_center: [f32; 3],
     egui_renderer: egui_wgpu::Renderer,
     egui_ctx: egui::Context,
@@ -1652,21 +1652,7 @@ impl Renderer {
             println!("No valid bounding boxes found in geosets");
         }
     }
-
-    pub fn rotate_camera(&mut self, delta_x: f32, delta_y: f32) {
-        self.camera.yaw -= delta_x * 0.01;
-        self.camera.pitch += delta_y * 0.01;
-        self.camera.pitch = self.camera.pitch.clamp(-1.5, 1.5);
-    }
-
-    pub fn get_camera_orientation(&self) -> (f32, f32) {
-        self.camera.get_orientation()
-    }
-
-    pub fn update_camera_state(&mut self, camera_state: &CameraState) {
-        self.camera = camera_state.clone();
-    }
-
+    
     pub fn update_colors(&mut self, settings: &crate::settings::Settings, model: Option<&Model>) {
         // Update team color
         self.set_team_color(settings.colors.team_color);

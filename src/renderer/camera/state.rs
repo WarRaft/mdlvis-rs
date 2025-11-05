@@ -12,12 +12,7 @@ pub struct CameraState {
 }
 
 impl CameraState {
-    pub fn new(
-        yaw: f32,
-        pitch: f32,
-        distance: f32,
-        target: [f32; 3],
-    ) -> Self {
+    pub fn new(yaw: f32, pitch: f32, distance: f32, target: [f32; 3]) -> Self {
         Self {
             yaw,
             pitch,
@@ -37,13 +32,6 @@ impl CameraState {
         self.target = self.default_target;
     }
 
-    pub fn set_defaults(&mut self, yaw: f32, pitch: f32, distance: f32, target: [f32; 3]) {
-        self.default_yaw = yaw;
-        self.default_pitch = pitch;
-        self.default_distance = distance;
-        self.default_target = target;
-    }
-
     pub fn get_orientation(&self) -> (f32, f32) {
         (self.yaw, self.pitch)
     }
@@ -51,6 +39,6 @@ impl CameraState {
 
 impl Default for CameraState {
     fn default() -> Self {
-        Self::new(0.0, 0.3, 200.0, [0.0, 0.0, 0.0])
+        Self::new(0.0, 0.3, 800.0, [0.0, 0.0, 0.0])
     }
 }

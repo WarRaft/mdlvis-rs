@@ -8,6 +8,7 @@ pub struct CameraController {
     right_mouse_pressed: bool,
     alt_pressed: bool,
     shift_pressed: bool,
+    control_pressed: bool,
     last_mouse_pos: Option<(f64, f64)>,
 }
 
@@ -20,6 +21,7 @@ impl CameraController {
             right_mouse_pressed: false,
             alt_pressed: false,
             shift_pressed: false,
+            control_pressed: false,
             last_mouse_pos: None,
         }
     }
@@ -28,8 +30,12 @@ impl CameraController {
         &self.state
     }
 
-    pub fn state_mut(&mut self) -> &mut CameraState {
-        &mut self.state
+    pub fn is_shift_pressed(&self) -> bool {
+        self.shift_pressed
+    }
+
+    pub fn is_control_pressed(&self) -> bool {
+        self.control_pressed
     }
 
     /// Handle mouse button press/release
@@ -57,16 +63,19 @@ impl CameraController {
         }
     }
 
-    /// Handle modifier keys (Shift, Alt)
-    pub fn on_modifiers(&mut self, shift: bool, alt: bool) {
+    /// Handle modifier keys (Shift, Alt, Control)
+    pub fn on_modifiers(&mut self, shift: bool, alt: bool, control: bool) {
         self.shift_pressed = shift;
         self.alt_pressed = alt;
+        self.control_pressed = control;
     }
 
     /// Handle mouse movement with camera transformations
     pub fn on_mouse_move(&mut self, position: (f64, f64)) -> bool {
-        let should_pan = self.middle_mouse_pressed || (self.shift_pressed && self.right_mouse_pressed);
-        let should_rotate = self.right_mouse_pressed || (self.alt_pressed && self.left_mouse_pressed);
+        let should_pan =
+            self.middle_mouse_pressed || (self.shift_pressed && self.right_mouse_pressed);
+        let should_rotate =
+            self.right_mouse_pressed || (self.alt_pressed && self.left_mouse_pressed);
 
         let mut handled = false;
 
@@ -96,7 +105,7 @@ impl CameraController {
     /// Rotate camera around target
     fn rotate(&mut self, delta_x: f32, delta_y: f32) {
         self.state.yaw -= delta_x * 0.01; // Inverted for natural rotation
-        self.state.pitch += delta_y * 0.01;
+        self.state.pitch -= delta_y * 0.01; // Inverted vertical axis
         self.state.pitch = self.state.pitch.clamp(-1.5, 1.5);
     }
 
@@ -117,43 +126,56 @@ impl CameraController {
         // Pan speed based on distance
         let pan_speed = self.state.distance * 0.001;
 
-        // Move target
-        self.state.target[0] += right.x * delta_x * pan_speed + up.x * delta_y * pan_speed;
-        self.state.target[1] += right.y * delta_x * pan_speed + up.y * delta_y * pan_speed;
-        self.state.target[2] += right.z * delta_x * pan_speed + up.z * delta_y * pan_speed;
+        // Move target (inverted vertical axis)
+        self.state.target[0] += right.x * delta_x * pan_speed - up.x * delta_y * pan_speed;
+        self.state.target[1] += right.y * delta_x * pan_speed - up.y * delta_y * pan_speed;
+        self.state.target[2] += right.z * delta_x * pan_speed - up.z * delta_y * pan_speed;
     }
 
-    /// Zoom camera
-    pub fn zoom(&mut self, delta: f32, cursor_ndc: Option<[f32; 2]>, aspect: f32) {
-        let zoom_factor = 1.0 - delta * 0.1;
-        let new_distance = (self.state.distance * zoom_factor).clamp(10.0, 1000.0);
-
-        if let Some(ndc) = cursor_ndc {
-            // Zoom towards cursor position
-            let forward = nalgebra_glm::normalize(&nalgebra_glm::vec3(
-                self.state.yaw.cos() * self.state.pitch.cos(),
-                self.state.yaw.sin() * self.state.pitch.cos(),
-                self.state.pitch.sin(),
-            ));
-            let right = nalgebra_glm::normalize(&nalgebra_glm::cross(&forward, &nalgebra_glm::vec3(0.0, 0.0, 1.0)));
-            let up = nalgebra_glm::cross(&right, &forward);
-
-            // Calculate cursor direction
-            let fov_scale = (45.0_f32.to_radians() / 2.0).tan();
-            let cursor_dir = nalgebra_glm::normalize(&(
-                forward + right * ndc[0] * fov_scale * aspect + up * ndc[1] * fov_scale
-            ));
-
-            // Move camera target towards cursor direction
-            let distance_change = self.state.distance - new_distance;
-            let target_offset = cursor_dir * distance_change * 0.5;
-
-            self.state.target[0] += target_offset.x;
-            self.state.target[1] += target_offset.y;
-            self.state.target[2] += target_offset.z;
+    /// Two-finger pan gesture (trackpad - ONLY camera control method)
+    pub fn on_pan_gesture(&mut self, delta_x: f32, delta_y: f32, control: bool, shift: bool) {
+        if control {
+            // Control + pan = zoom from viewport center (simple distance change)
+            self.simple_zoom(-delta_y * 0.5);
+        } else if shift {
+            // Shift + pan = pan (move viewport center / target)
+            self.pan(delta_x, delta_y);
+        } else {
+            // Just pan = rotate around GRID CENTER (0,0,0)
+            self.rotate_around_grid_center(delta_x, delta_y);
         }
+    }
 
-        self.state.distance = new_distance;
+    /// Simple zoom - just change distance, no cursor bullshit
+    pub fn simple_zoom(&mut self, delta: f32) {
+        let zoom_factor = 1.0 - delta * 0.1;
+        self.state.distance = (self.state.distance * zoom_factor).clamp(10.0, 1000.0);
+    }
+
+    /// Rotate camera around grid center (0,0,0) instead of current target
+    fn rotate_around_grid_center(&mut self, delta_x: f32, delta_y: f32) {
+        // Save current target offset from grid center
+        let offset_x = self.state.target[0];
+        let offset_y = self.state.target[1];
+        let offset_z = self.state.target[2];
+
+        // Temporarily set target to grid center for rotation
+        self.state.target = [0.0, 0.0, 0.0];
+
+        // Perform rotation around grid center
+        self.rotate(delta_x, delta_y);
+
+        // Restore target offset (rotate the offset vector too)
+        // Calculate rotation of the offset vector
+        let cos_yaw = (-delta_x * 0.01).cos();
+        let sin_yaw = (-delta_x * 0.01).sin();
+
+        let rotated_x = offset_x * cos_yaw - offset_y * sin_yaw;
+        let rotated_y = offset_x * sin_yaw + offset_y * cos_yaw;
+
+        self.state.target[0] = rotated_x;
+        self.state.target[1] = rotated_y;
+        self.state.target[2] = offset_z; // Z не меняется при горизонтальном вращении
     }
 
     /// Reset camera to defaults
