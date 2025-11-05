@@ -5,7 +5,7 @@ struct CameraUniform {
 
 struct MaterialUniform {
     team_color: vec4<f32>, // team_color.rgb + replaceable_id (0=none, 1=team_color, 2=team_glow)
-    material_type_and_wireframe: vec4<f32>, // filter_mode + wireframe_mode + padding
+    material_type_and_wireframe: vec4<f32>, // filter_mode + wireframe_mode + layer_alpha + shading_flags
     extra_padding: vec4<f32>, // Padding for alignment
 };
 
@@ -56,6 +56,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let replaceable_id = material.team_color.w; // 0=none, 1=team_color, 2=team_glow
     let filter_mode = material.material_type_and_wireframe.x;
     let wireframe_mode = material.material_type_and_wireframe.y;
+    let layer_alpha = material.material_type_and_wireframe.z;
+    let shading_flags = u32(material.material_type_and_wireframe.w);
+    
+    // Check if unshaded flag is set (0x1)
+    let is_unshaded = (shading_flags & 0x1u) != 0u;
     
     // In wireframe mode, use a solid color instead of texture
     if (wireframe_mode > 0.5) {
@@ -69,12 +74,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample texture (for RID=1/2 textures are already generated with team color)
     var tex_color = textureSample(t_diffuse, s_diffuse, in.uv);
     
-    // No need to apply team color here - RID textures are pre-generated with team color
-
+    // Apply layer alpha to texture alpha channel
+    tex_color = vec4<f32>(tex_color.rgb, tex_color.a * layer_alpha);
     
-    // Apply lighting only to non-glow materials
+    // Apply lighting only to non-glow materials AND if not unshaded
     var final_color = tex_color;
-    if (filter_mode < 3.0) { // Not additive/glow
+    if (filter_mode < 3.0 && !is_unshaded) { // Not additive/glow AND not unshaded
         let light_dir = normalize(vec3<f32>(1.0, 1.0, 1.0));
         var normal = normalize(in.normal);
         normal.y = -normal.y; // Flip normal Y too

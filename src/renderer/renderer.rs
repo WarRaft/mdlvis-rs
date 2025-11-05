@@ -169,7 +169,7 @@ impl Renderer {
         });
 
         // Create material uniform buffer
-        let material_uniform = MaterialUniform::new([1.0, 0.0, 0.0], 0, false, FilterMode::Opaque);
+        let material_uniform = MaterialUniform::new([1.0, 0.0, 0.0], 0, false, FilterMode::Opaque, 1.0, 0);
 
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Material Buffer"),
@@ -924,7 +924,7 @@ impl Renderer {
         let update_material_uniform = |geoset: &GeosetRenderInfo,
                                        layer_index: usize|
          -> MaterialUniform {
-            let (filter_mode, replaceable_id) = if let Some(mat_id) = geoset.material_id {
+            let (filter_mode, replaceable_id, layer_alpha, shading_flags) = if let Some(mat_id) = geoset.material_id {
                 if mat_id < self.materials.len() {
                     let material = &self.materials[mat_id];
                     if layer_index < material.layers.len() {
@@ -938,18 +938,20 @@ impl Renderer {
                         } else {
                             0
                         };
-                        (layer.filter_mode.clone(), rid)
+                        // Convert shading flags array back to bitfield for shader
+                        let shading_bits = crate::model::ShadingFlags::to_bits(&layer.shading_flags);
+                        (layer.filter_mode.clone(), rid, layer.alpha, shading_bits)
                     } else {
-                        (FilterMode::Opaque, 0)
+                        (FilterMode::Opaque, 0, 1.0, 0)
                     }
                 } else {
-                    (FilterMode::Opaque, 0)
+                    (FilterMode::Opaque, 0, 1.0, 0)
                 }
             } else {
-                (FilterMode::Opaque, 0)
+                (FilterMode::Opaque, 0, 1.0, 0)
             };
 
-            MaterialUniform::new(self.team_color, replaceable_id, wireframe_mode, filter_mode)
+            MaterialUniform::new(self.team_color, replaceable_id, wireframe_mode, filter_mode, layer_alpha, shading_flags)
         };
 
         let output = self.surface.get_current_texture()?;

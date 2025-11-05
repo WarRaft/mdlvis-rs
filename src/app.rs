@@ -307,6 +307,7 @@ impl App {
                 camera_pitch,
                 &mut self.settings,
                 &mut self.texture_panel,
+                &mut self.renderer,
             );
             
             reset_camera = reset_camera_ui;

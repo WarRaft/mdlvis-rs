@@ -597,27 +597,35 @@ fn read_materials(file: &mut File, model: &mut Model, size: u32) -> Result<(), B
             
             // Read layer data
             let filter_mode_val = file.read_u32::<LittleEndian>()?;
-            let _shading_flags = file.read_u32::<LittleEndian>()?;
+            let shading_flags_bits = file.read_u32::<LittleEndian>()?;
             let texture_id = file.read_u32::<LittleEndian>()?;
             let _texture_animation_id = file.read_u32::<LittleEndian>()?;
             let _coord_id = file.read_u32::<LittleEndian>()?;
             let alpha = file.read_f32::<LittleEndian>()?;
             
-            // Map filter mode from MDX values (from delphi/mdlwork.pas):
-            // 0=Opaque (legacy), 1=Opaque, 2=ColorAlpha, 3=FullAlpha, 4=Additive, 5=Modulate, 6=Modulate2X, 7=AddAlpha, 8=AlphaKey
+            // Map filter mode from MDX specification:
+            // 0=none (opaque), 1=transparent, 2=blend, 3=additive, 4=addAlpha, 5=modulate, 6=modulate2x
             let filter_mode = match filter_mode_val {
-                0 | 1 => crate::model::FilterMode::Opaque, // 0 is legacy opaque
-                2 | 3 => crate::model::FilterMode::Transparent, // ColorAlpha and FullAlpha
-                4 => crate::model::FilterMode::Additive,
+                0 => crate::model::FilterMode::Opaque, // None = Opaque
+                1 => crate::model::FilterMode::Transparent,
+                2 => crate::model::FilterMode::Blend,
+                3 => crate::model::FilterMode::Additive,
+                4 => crate::model::FilterMode::AddAlpha,
                 5 => crate::model::FilterMode::Modulate,
                 6 => crate::model::FilterMode::Modulate2x,
-                7 => crate::model::FilterMode::AddAlpha,
-                _ => crate::model::FilterMode::Blend,
+                _ => {
+                    eprintln!("Unknown filter mode: {}, defaulting to Opaque", filter_mode_val);
+                    crate::model::FilterMode::Opaque
+                }
             };
+            
+            // Parse shading flags once during loading
+            let shading_flags = crate::model::ShadingFlags::from_bits(shading_flags_bits);
             
             let layer = crate::model::Layer {
                 texture_id: Some(texture_id as usize),
                 filter_mode,
+                shading_flags,
                 alpha,
             };
             material.layers.push(layer);

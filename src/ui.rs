@@ -95,6 +95,7 @@ impl Ui {
         camera_pitch: f32,
         settings: &mut Settings,
         texture_panel: &mut TexturePanel,
+        renderer: &mut crate::renderer::renderer::Renderer,
     ) -> (bool, f32, Vec<bool>, bool, bool, bool) {  // reset_camera, current_frame, show_geosets, colors_changed, open_model, use_animation
         let mut reset_camera = false;
         let mut colors_changed = false;
@@ -166,7 +167,7 @@ impl Ui {
         }
         
         if settings.ui.show_materials {
-            self.show_materials_window(ctx, model, &mut settings.ui);
+            self.show_materials_window(ctx, model, &mut settings.ui, renderer);
         }
         
         if settings.ui.show_animation {
@@ -460,6 +461,7 @@ impl Ui {
         ctx: &egui::Context,
         model: &Option<Model>,
         ui_settings: &mut crate::settings::UiSettings,
+        renderer: &mut crate::renderer::renderer::Renderer,
     ) {
         egui::Window::new("🎨 Materials")
             .default_width(400.0)
@@ -473,7 +475,57 @@ impl Ui {
                                 ui.group(|ui| {
                                     ui.set_min_width(ui.available_width());
                                     
-                                    ui.heading(format!("Material #{}", mat_id));
+                                    ui.horizontal(|ui| {
+                                        ui.heading(format!("Material #{}", mat_id));
+                                        
+                                        // JSON copy button
+                                        if ui.button("📋 JSON").on_hover_text("Copy material info as JSON to clipboard").clicked() {
+                                            // Build JSON representation
+                                            let mut json = format!(
+                                                "{{\n  \"material_id\": {},\n  \"layers\": [\n",
+                                                mat_id
+                                            );
+                                            
+                                            for (layer_id, layer) in material.layers.iter().enumerate() {
+                                                json.push_str(&format!("    {{\n"));
+                                                json.push_str(&format!("      \"layer_id\": {},\n", layer_id));
+                                                
+                                                if let Some(tex_id) = layer.texture_id {
+                                                    json.push_str(&format!("      \"texture_id\": {},\n", tex_id));
+                                                    
+                                                    if let Some(texture_info) = model.textures.get(tex_id) {
+                                                        json.push_str(&format!("      \"filename\": \"{}\",\n", texture_info.filename));
+                                                        json.push_str(&format!("      \"replaceable_id\": {},\n", texture_info.replaceable_id));
+                                                    }
+                                                } else {
+                                                    json.push_str("      \"texture_id\": null,\n");
+                                                }
+                                                
+                                                json.push_str(&format!("      \"filter_mode\": \"{:?}\",\n", layer.filter_mode));
+                                                
+                                                // Add shading flags as array of names (already parsed)
+                                                if !layer.shading_flags.is_empty() {
+                                                    let flags_json: Vec<String> = layer.shading_flags.iter().map(|f| format!("\"{}\"", f.name())).collect();
+                                                    json.push_str(&format!("      \"shading_flags\": [{}],\n", flags_json.join(", ")));
+                                                } else {
+                                                    json.push_str("      \"shading_flags\": [],\n");
+                                                }
+                                                
+                                                json.push_str(&format!("      \"alpha\": {:.2}\n", layer.alpha));
+                                                
+                                                if layer_id < material.layers.len() - 1 {
+                                                    json.push_str("    },\n");
+                                                } else {
+                                                    json.push_str("    }\n");
+                                                }
+                                            }
+                                            
+                                            json.push_str("  ]\n}");
+                                            
+                                            // Copy to clipboard
+                                            ctx.copy_text(json);
+                                        }
+                                    });
                                     
                                     ui.label(format!("Layers: {}", material.layers.len()));
                                     
@@ -482,12 +534,66 @@ impl Ui {
                                         ui.label(format!("  Layer #{}", layer_id));
                                         
                                         if let Some(tex_id) = layer.texture_id {
-                                            ui.label(format!("    Texture ID: {}", tex_id));
+                                            // Texture preview with collapsing header
+                                            // Use unique ID based on material and layer to avoid conflicts
+                                            let header_id = egui::Id::new(("texture_preview", mat_id, layer_id));
+                                            
+                                            // Build header text with RID if present
+                                            let header_text = if let Some(texture_info) = model.textures.get(tex_id) {
+                                                if texture_info.replaceable_id == 1 {
+                                                    format!("    📎 Texture #{} [RID: 1 Team Color]", tex_id)
+                                                } else if texture_info.replaceable_id == 2 {
+                                                    format!("    📎 Texture #{} [RID: 2 Team Glow]", tex_id)
+                                                } else if texture_info.replaceable_id > 0 {
+                                                    format!("    📎 Texture #{} [RID: {}]", tex_id, texture_info.replaceable_id)
+                                                } else {
+                                                    format!("    📎 Texture #{}", tex_id)
+                                                }
+                                            } else {
+                                                format!("    📎 Texture #{}", tex_id)
+                                            };
+                                            
+                                            egui::CollapsingHeader::new(header_text)
+                                                .id_source(header_id)
+                                                .default_open(false)
+                                                .show(ui, |ui| {
+                                                    // Don't use indent - CollapsingHeader already has proper indentation
+                                                    if let Some(texture_info) = model.textures.get(tex_id) {
+                                                        // Show texture info
+                                                        if !texture_info.filename.is_empty() {
+                                                            ui.label(egui::RichText::new(&texture_info.filename).small());
+                                                        }
+                                                        
+                                                        // Show RID
+                                                        if texture_info.replaceable_id == 1 {
+                                                            ui.colored_label(egui::Color32::GOLD, "[RID: 1 Team Color]");
+                                                        } else if texture_info.replaceable_id == 2 {
+                                                            ui.colored_label(egui::Color32::GOLD, "[RID: 2 Team Glow]");
+                                                        } else if texture_info.replaceable_id > 0 {
+                                                            ui.colored_label(egui::Color32::GOLD, format!("[RID: {}]", texture_info.replaceable_id));
+                                                        }
+                                                        
+                                                        // Show texture preview
+                                                        if let Some(egui_tex_id) = renderer.get_egui_texture_id(tex_id) {
+                                                            ui.image(egui::ImageSource::Texture(egui::load::SizedTexture {
+                                                                id: egui_tex_id,
+                                                                size: egui::vec2(128.0, 128.0),
+                                                            }));
+                                                        }
+                                                    }
+                                                });
                                         } else {
                                             ui.label("    Texture ID: None");
                                         }
                                         
                                         ui.label(format!("    Filter Mode: {:?}", layer.filter_mode));
+                                        
+                                        // Display shading flags (already parsed)
+                                        if !layer.shading_flags.is_empty() {
+                                            let flags_names: Vec<&str> = layer.shading_flags.iter().map(|f| f.name()).collect();
+                                            ui.label(format!("    Shading: {}", flags_names.join(", ")));
+                                        }
+                                        
                                         ui.label(format!("    Alpha: {:.2}", layer.alpha));
                                     }
                                 });
