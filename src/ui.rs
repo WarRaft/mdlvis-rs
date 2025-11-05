@@ -1,5 +1,6 @@
 use crate::model::Model;
 use crate::settings::Settings;
+use crate::texture::TexturePanel;
 
 pub struct Ui {
     show_geosets: Vec<bool>,
@@ -7,6 +8,7 @@ pub struct Ui {
     current_frame: f32,
     is_playing: bool,
     is_looping: bool,
+    use_animation: bool, // Flag: true = use animated transforms, false = use original parsed data
     last_update_time: f64,
     last_frame_time: f64, // Time when we last processed a frame (to prevent multiple updates per frame)
 }
@@ -19,6 +21,7 @@ impl Ui {
             current_frame: 0.0,
             is_playing: false,
             is_looping: true,
+            use_animation: false, // Start with original parsed data
             last_update_time: 0.0,
             last_frame_time: 0.0,
         }
@@ -28,10 +31,11 @@ impl Ui {
     pub fn reset_animation(&mut self, model: &Option<Model>) {
         self.selected_sequence = 0;
         self.is_playing = false;
+        self.use_animation = false; // Back to original parsed data
         self.last_update_time = 0.0;
         self.last_frame_time = 0.0;
-        
-        // Set current_frame to start of first sequence if model has animations
+
+        // Set current_frame to start of first sequence
         if let Some(model) = model {
             if !model.sequences.is_empty() {
                 self.current_frame = model.sequences[0].start_frame as f32;
@@ -43,67 +47,60 @@ impl Ui {
         }
     }
 
-    pub fn show(
+    /// Update animation playback - advances current_frame based on time
+    /// Should be called every frame BEFORE show()
+    pub fn animate(&mut self, model: &Option<Model>, current_time: f64) {
+        if !self.is_playing {
+            return;
+        }
+
+        let Some(model) = model else { return };
+        if model.sequences.is_empty() || self.selected_sequence >= model.sequences.len() {
+            return;
+        }
+
+        let seq = &model.sequences[self.selected_sequence];
+
+        // Initialize timing on first frame
+        if self.last_update_time == 0.0 {
+            self.last_update_time = current_time;
+            self.last_frame_time = current_time;
+            return;
+        }
+
+        // Calculate delta time
+        let delta_time = current_time - self.last_update_time;
+        self.last_update_time = current_time;
+
+        // Advance frame (30 fps)
+        let frame_delta = delta_time * 30.0;
+        self.current_frame += frame_delta as f32;
+
+        // Handle looping
+        if self.current_frame >= seq.end_frame as f32 {
+            if self.is_looping && !seq.non_looping {
+                // Loop back to start
+                self.current_frame = seq.start_frame as f32 + (self.current_frame - seq.end_frame as f32);
+            } else {
+                // Stop at end
+                self.current_frame = seq.end_frame as f32;
+                self.is_playing = false;
+            }
+        }
+    }    pub fn show(
         &mut self,
         ctx: &egui::Context,
         model: &Option<Model>,
         camera_yaw: f32,
         camera_pitch: f32,
         settings: &mut Settings,
-        _texture_panel: &mut crate::texture::TexturePanel,
-    ) -> (bool, f32, Vec<bool>, bool, bool) {
+        texture_panel: &mut TexturePanel,
+    ) -> (bool, f32, Vec<bool>, bool, bool, bool) {  // reset_camera, current_frame, show_geosets, colors_changed, open_model, use_animation
         let mut reset_camera = false;
         let mut colors_changed = false;
         let mut open_model = false;
 
-        // Update animation if playing (ONCE per frame)
-        let current_time = ctx.input(|i| i.time);
-        
-        if self.is_playing {
-            // Check if this is a new frame (prevent multiple updates per frame)
-            if (current_time - self.last_frame_time).abs() > 0.0001 {
-                self.last_frame_time = current_time;
-                
-                if let Some(model) = model {
-                    if !model.sequences.is_empty() && self.selected_sequence < model.sequences.len() {
-                        let seq = &model.sequences[self.selected_sequence];
-                        
-                        // Initialize timer on first frame
-                        if self.last_update_time == 0.0 {
-                            self.last_update_time = current_time;
-                        } else {
-                            // Update animation
-                            let delta_time = (current_time - self.last_update_time) as f32;
-                            self.last_update_time = current_time;
-                            
-                            // 30 FPS for Warcraft III animations
-                            self.current_frame += delta_time * 30.0;
-                            
-                            let start = seq.start_frame as f32;
-                            let end = seq.end_frame as f32;
-                            
-                            // Handle end of animation
-                            if self.current_frame > end {
-                                if self.is_looping {
-                                    // Loop regardless of sequence flag - user control takes priority
-                                    self.current_frame = start;
-                                } else {
-                                    // Stop at end
-                                    self.current_frame = end;
-                                    self.is_playing = false;
-                                    self.last_update_time = 0.0;
-                                }
-                            }
-                        }
-                        
-                        // Request continuous repaint while playing
-                        ctx.request_repaint();
-                    }
-                }
-            }
-        }
-
-        // Main menu bar at the top
+        // Top menu bar
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 // Open Model button
@@ -277,6 +274,7 @@ impl Ui {
             self.show_geosets.clone(),
             colors_changed,
             open_model,
+            self.use_animation,
         )
     }
 
@@ -528,6 +526,7 @@ impl Ui {
                             ui.add_enabled_ui(!self.is_playing, |ui| {
                                 if ui.button("▶ Play").clicked() {
                                     self.is_playing = true;
+                                    self.use_animation = true; // Enable animated transforms
                                     
                                     // Starting playback
                                     if self.selected_sequence < model.sequences.len() {
@@ -539,18 +538,18 @@ impl Ui {
                                         }
                                     }
                                     self.last_update_time = 0.0; // Will be initialized on next update
-                                    self.last_frame_time = 0.0; // RESET frame tracking too!
+                                    self.last_frame_time = 0.0;
                                 }
                             });
                             
                             ui.add_enabled_ui(self.is_playing, |ui| {
                                 if ui.button("⏸ Pause").clicked() {
                                     self.is_playing = false;
-                                    self.last_update_time = 0.0; // Reset for resume
+                                    self.last_update_time = 0.0;
                                 }
                             });
                             
-                            // Stop is enabled if playing OR if frame is not at start
+                            // Stop button - stops and resets to start of sequence
                             let seq = &model.sequences[self.selected_sequence];
                             let can_stop = self.is_playing || self.current_frame > seq.start_frame as f32;
                             ui.add_enabled_ui(can_stop, |ui| {
@@ -560,6 +559,16 @@ impl Ui {
                                     self.current_frame = seq.start_frame as f32;
                                 }
                             });
+                            
+                            ui.separator();
+                            
+                            // Reset button - disables animation, returns to original parsed data
+                            if ui.button("🔄 Reset").clicked() {
+                                self.is_playing = false;
+                                self.use_animation = false; // Disable animated transforms
+                                self.last_update_time = 0.0;
+                                self.current_frame = model.sequences[self.selected_sequence].start_frame as f32;
+                            }
                             
                             let loop_button = if self.is_looping { "🔁 Loop" } else { "➡ Once" };
                             if ui.button(loop_button).clicked() {

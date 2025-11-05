@@ -175,18 +175,32 @@ fn read_geosets(file: &mut File, model: &mut Model, geos_size: u32) -> Result<()
                     }
                 }
                 b"GNDX" => {
-                    let count = file.read_u32::<LittleEndian>()?;
-                    file.seek(SeekFrom::Current(count as i64))?;
+                    // Vertex Groups: byte array mapping each vertex to a matrix group
+                    let count = file.read_u32::<LittleEndian>()? as usize;
+                    geoset.vertex_groups.reserve(count);
+                    for _ in 0..count {
+                        geoset.vertex_groups.push(file.read_u8()?);
+                    }
                 }
                 b"MTGC" => {
-                    let count = file.read_u32::<LittleEndian>()?;
-                    file.seek(SeekFrom::Current((count * 4) as i64))?;
+                    // Matrix Group Counts: how many bones in each group
+                    let num_groups = file.read_u32::<LittleEndian>()? as usize;
+                    geoset.matrix_groups.reserve(num_groups);
+                    for _ in 0..num_groups {
+                        let group_size = file.read_u32::<LittleEndian>()? as usize;
+                        geoset.matrix_groups.push(Vec::with_capacity(group_size));
+                    }
                 }
                 b"MATS" => {
-                    // MATS = bone matrices, not material ID!
-                    let count = file.read_u32::<LittleEndian>()?;
-                    // Skip all matrices
-                    file.seek(SeekFrom::Current((count * 4) as i64))?;
+                    // Matrix Groups Data: bone indices for each group
+                    let total_count = file.read_u32::<LittleEndian>()? as usize;
+                    
+                    // Read bone indices into the pre-allocated matrix groups
+                    for group in &mut geoset.matrix_groups {
+                        for _ in 0..group.capacity() {
+                            group.push(file.read_u32::<LittleEndian>()?);
+                        }
+                    }
                     
                     // After MATS comes MaterialID as a plain long field
                     let material_id = file.read_u32::<LittleEndian>()?;
@@ -260,8 +274,12 @@ fn read_geosets(file: &mut File, model: &mut Model, geos_size: u32) -> Result<()
         }
 
         if !geoset.vertices.is_empty() {
-            println!("  Geoset {}: {} vertices, {} faces", 
-                model.geosets.len(), geoset.vertices.len(), geoset.faces.len());
+            println!("  Geoset {}: {} vertices, {} faces, {} vertex groups, {} matrix groups", 
+                model.geosets.len(), 
+                geoset.vertices.len(), 
+                geoset.faces.len(),
+                geoset.vertex_groups.len(),
+                geoset.matrix_groups.len());
             model.geosets.push(geoset);
         }
         
@@ -345,6 +363,99 @@ fn read_textures(file: &mut File, model: &mut Model, size: u32) -> Result<(), Bo
     Ok(())
 }
 
+// Tag constants for controllers
+const TAG_KGTR: u32 = 0x5254474B; // Translation (3 floats)
+const TAG_KGRT: u32 = 0x5452474B; // Rotation (4 floats - quaternion)
+const TAG_KGSC: u32 = 0x4353474B; // Scaling (3 floats)
+const TAG_KLAV: u32 = 0x56414C4B; // Visibility (1 float)
+
+// Reads a controller chunk if present, returns controller index or -1 if not found
+fn read_controller(
+    file: &mut File,
+    model: &mut Model,
+    expected_tag: u32,
+    element_size: usize,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let pos_before = file.stream_position()?;
+    
+    // Try to read tag
+    let tag = match file.read_u32::<LittleEndian>() {
+        Ok(t) => t,
+        Err(_) => {
+            file.seek(SeekFrom::Start(pos_before))?;
+            return Ok(-1);
+        }
+    };
+    
+    // If tag doesn't match, rewind and return -1 (static)
+    if tag != expected_tag {
+        file.seek(SeekFrom::Start(pos_before))?;
+        return Ok(-1);
+    }
+    
+    // Tag matches, read controller data
+    let keyframe_count = file.read_u32::<LittleEndian>()? as usize;
+    let interpolation_type = file.read_u32::<LittleEndian>()?;
+    let global_seq_id = file.read_i32::<LittleEndian>()?;
+    
+    // Create AnimationController
+    let controller_idx = model.controllers.len() as i32;
+    let mut keyframes = Vec::with_capacity(keyframe_count);
+    
+    // Read keyframes
+    for _ in 0..keyframe_count {
+        let frame = file.read_i32::<LittleEndian>()?;
+        
+        // Read data values
+        let mut data = Vec::with_capacity(element_size);
+        for _ in 0..element_size {
+            data.push(file.read_f32::<LittleEndian>()?);
+        }
+        
+        // Read tangents if Hermite (2) or Bezier (3)
+        let (in_tan, out_tan) = if interpolation_type == 2 || interpolation_type == 3 {
+            let mut in_tan = Vec::with_capacity(element_size);
+            let mut out_tan = Vec::with_capacity(element_size);
+            
+            for _ in 0..element_size {
+                in_tan.push(file.read_f32::<LittleEndian>()?);
+            }
+            for _ in 0..element_size {
+                out_tan.push(file.read_f32::<LittleEndian>()?);
+            }
+            
+            (in_tan, out_tan)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        
+        keyframes.push(crate::model::Keyframe {
+            frame,
+            data,
+            in_tan,
+            out_tan,
+        });
+    }
+    
+    model.controllers.push(crate::model::AnimationController {
+        interpolation_type,
+        global_seq_id,
+        keyframes,
+    });
+    
+    // Debug: print first controller info
+    if model.controllers.len() == 1 {
+        println!("  First controller: {} keyframes, interp_type={}, global_seq={}", 
+            keyframe_count, interpolation_type, global_seq_id);
+        if !model.controllers[0].keyframes.is_empty() {
+            let kf = &model.controllers[0].keyframes[0];
+            println!("    First keyframe: frame={}, data={:?}", kf.frame, kf.data);
+        }
+    }
+    
+    Ok(controller_idx)
+}
+
 fn read_bones(file: &mut File, model: &mut Model, size: u32) -> Result<(), Box<dyn std::error::Error>> {
     let start_pos = file.stream_position()?;
     let end_pos = start_pos + size as u64;
@@ -369,8 +480,13 @@ fn read_bones(file: &mut File, model: &mut Model, size: u32) -> Result<(), Box<d
         let parent_id = file.read_i32::<LittleEndian>()?;
         let _flags = file.read_u32::<LittleEndian>()?;
         
-        // Skip to end of Node (which includes all tracks/controllers)
-        // node_start + inclusiveSize is where the Node ends
+        // Read controllers (these are inside the Node structure)
+        let translation_idx = read_controller(file, model, TAG_KGTR, 3)?;
+        let rotation_idx = read_controller(file, model, TAG_KGRT, 4)?;
+        let scaling_idx = read_controller(file, model, TAG_KGSC, 3)?;
+        let visibility_idx = read_controller(file, model, TAG_KLAV, 1)?;
+        
+        // Seek to end of Node structure
         file.seek(SeekFrom::Start(node_start + inclusive_size as u64))?;
         
         // Now read Bone-specific fields (AFTER Node structure)
@@ -384,10 +500,14 @@ fn read_bones(file: &mut File, model: &mut Model, size: u32) -> Result<(), Box<d
             pivot_point: [0.0, 0.0, 0.0], // Will be set from PIVT chunk
             geoset_id: if geoset_id >= 0 { Some(geoset_id as u32) } else { None },
             geoset_anim_id: if geoset_anim_id >= 0 { Some(geoset_anim_id as u32) } else { None },
+            translation_idx,
+            rotation_idx,
+            scaling_idx,
+            visibility_idx,
         });
     }
     
-    println!("Loaded {} bones", model.bones.len());
+    println!("Loaded {} bones, {} controllers", model.bones.len(), model.controllers.len());
     Ok(())
 }
 
@@ -417,7 +537,13 @@ fn read_helpers(file: &mut File, model: &mut Model, size: u32) -> Result<(), Box
         let parent_id = file.read_i32::<LittleEndian>()?;
         let _flags = file.read_u32::<LittleEndian>()?;
         
-        // Skip to end of Node (which includes all tracks/controllers)
+        // Read controllers (these are inside the Node structure)
+        let translation_idx = read_controller(file, model, TAG_KGTR, 3)?;
+        let rotation_idx = read_controller(file, model, TAG_KGRT, 4)?;
+        let scaling_idx = read_controller(file, model, TAG_KGSC, 3)?;
+        let visibility_idx = read_controller(file, model, TAG_KLAV, 1)?;
+        
+        // Seek to end of Node structure
         file.seek(SeekFrom::Start(node_start + inclusive_size as u64))?;
         
         // Helper has no additional fields after Node, unlike Bone
@@ -426,6 +552,10 @@ fn read_helpers(file: &mut File, model: &mut Model, size: u32) -> Result<(), Box
             object_id,
             parent_id,
             pivot_point: [0.0, 0.0, 0.0], // Will be set from PIVT chunk
+            translation_idx,
+            rotation_idx,
+            scaling_idx,
+            visibility_idx,
         });
     }
     

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Build and run mdlvis-rs with test model
+# Build and test parse mdlvis-rs with test model
 set -e
 
 echo "Building mdlvis-rs..."

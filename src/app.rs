@@ -272,20 +272,29 @@ impl App {
         // Get camera orientation for axis gizmo
         let (camera_yaw, camera_pitch) = self.renderer.camera.get_orientation();
 
+        // Update animation playback BEFORE UI (so current_frame is up-to-date)
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        self.ui.animate(&self.model, current_time);
+
         let mut reset_camera = false;
         let mut current_frame = 0.0;
         let mut show_geosets = Vec::new();
         let mut colors_changed = false;
         let mut open_model = false;
         let mut texture_load_requests: Vec<usize> = Vec::new();
+        let mut use_animation = false;
 
         let full_output = egui_ctx.run(raw_input, |ctx| {
-            (
-                reset_camera,
-                current_frame,
-                show_geosets,
-                colors_changed,
-                open_model,
+            let (
+                reset_camera_ui,
+                current_frame_ui,
+                show_geosets_ui,
+                colors_changed_ui,
+                open_model_ui,
+                use_animation_ui,
             ) = self.ui.show(
                 ctx,
                 &self.model,
@@ -294,6 +303,13 @@ impl App {
                 &mut self.settings,
                 &mut self.texture_panel,
             );
+            
+            reset_camera = reset_camera_ui;
+            current_frame = current_frame_ui;
+            show_geosets = show_geosets_ui;
+            colors_changed = colors_changed_ui;
+            open_model = open_model_ui;
+            use_animation = use_animation_ui;
 
             // Show texture panel
             if let Some(requests) = self.texture_panel.show(
@@ -357,11 +373,13 @@ impl App {
         let wireframe_mode = self.settings.display.wireframe_mode;
         let far_plane = self.settings.display.far_plane;
 
-        // Update animation if model is loaded
-        if self.model.is_some() && !self.animation_system.bone_states.is_empty() {
+        // Update animation ONLY if use_animation flag is enabled
+        if use_animation && self.model.is_some() && !self.animation_system.bones.is_empty() {
             self.animation_system.update(current_frame);
-            // Apply animation to vertex buffer
             self.renderer.update_animation(&self.animation_system);
+        } else {
+            // Reset to original parsed vertices (no animation)
+            self.renderer.reset_to_original_vertices();
         }
 
         // Sync camera state to renderer
@@ -519,10 +537,14 @@ impl App {
         self.model = Some(model.clone());
         
         // Initialize animation system with bones
+        println!("Initializing animation system...");
         self.animation_system.init_from_model(&model);
+        println!("Animation system initialized");
         
         // Reset animation state for new model
+        println!("Resetting UI animation state...");
         self.ui.reset_animation(&self.model);
+        println!("UI animation state reset");
         
         println!("Model loaded successfully");
 

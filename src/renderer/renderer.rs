@@ -58,6 +58,8 @@ pub struct Renderer {
     view_proj_matrix: nalgebra_glm::Mat4,
     // Store original vertices for animation
     original_vertices: Vec<Vertex>,
+    // Store model for accessing vertex groups during animation
+    model: Option<Model>,
 }
 
 impl Renderer {
@@ -901,6 +903,7 @@ impl Renderer {
             egui_ctx,
             view_proj_matrix: nalgebra_glm::Mat4::identity(),
             original_vertices: Vec::new(),
+            model: None,
         })
     }
 
@@ -1341,6 +1344,9 @@ impl Renderer {
             return;
         }
 
+        // Store model for animation
+        self.model = Some(model.clone());
+
         let mut all_vertices: Vec<Vertex> = Vec::new();
         let mut all_indices: Vec<u16> = Vec::new();
         let mut geosets_info: Vec<GeosetRenderInfo> = Vec::new();
@@ -1658,32 +1664,134 @@ impl Renderer {
         }
     }
     
-    /// Update vertex buffer with animated vertices
-    pub fn update_animation(&mut self, animation_system: &crate::animation::AnimationSystem) {
-        if self.original_vertices.is_empty() || animation_system.bone_states.is_empty() {
+    /// Reset vertex buffer to original parsed vertices (no animation)
+    pub fn reset_to_original_vertices(&mut self) {
+        if self.original_vertices.is_empty() {
             return;
         }
 
-        // For now, apply first bone's rotation to all vertices (TEST)
-        let bone = &animation_system.bone_states[0];
-        
+        // Update vertex buffer with original data
+        self.queue.write_buffer(
+            &self.vertex_buffer,
+            0,
+            bytemuck::cast_slice(&self.original_vertices),
+        );
+    }
+    
+    /// Update vertex buffer with animated vertices
+    /// Based on CalcAnimCoords from mdlDraw.pas (line 2310)
+    pub fn update_animation(&mut self, animation_system: &crate::animation::AnimationSystem) {
+        if self.original_vertices.is_empty() || animation_system.bones.is_empty() {
+            return;
+        }
+
+        let Some(model) = &self.model else {
+            return;
+        };
+
         let mut transformed_vertices = self.original_vertices.clone();
-        
-        // Use model center as pivot point for test
-        let pivot = nalgebra_glm::vec3(self.model_center[0], self.model_center[1], self.model_center[2]);
-        
-        for vertex in &mut transformed_vertices {
-            // Transform vertex position around model center
-            let pos = nalgebra_glm::vec3(vertex.position[0], vertex.position[1], vertex.position[2]);
-            let rel = pos - pivot;
-            let transformed = pivot + bone.abs_matrix * rel;
+        let mut vertex_offset = 0;
+
+        // Process each geoset
+        for geoset in &model.geosets {
+            let num_vertices = geoset.vertices.len();
             
-            vertex.position = [transformed.x, transformed.y, transformed.z];
+            // Transform each vertex in this geoset
+            for i in 0..num_vertices {
+                if i >= geoset.vertex_groups.len() {
+                    continue;
+                }
+                
+                let group_idx = geoset.vertex_groups[i] as usize;
+                if group_idx >= geoset.matrix_groups.len() {
+                    continue;
+                }
+                
+                // Get bone indices for this vertex
+                let bone_indices = &geoset.matrix_groups[group_idx];
+                if bone_indices.is_empty() {
+                    continue;
+                }
+                
+                let vertex_idx = vertex_offset + i;
+                if vertex_idx >= transformed_vertices.len() {
+                    continue;
+                }
+                
+                let original_pos = nalgebra_glm::vec3(
+                    self.original_vertices[vertex_idx].position[0],
+                    self.original_vertices[vertex_idx].position[1],
+                    self.original_vertices[vertex_idx].position[2],
+                );
+                
+                let original_normal = nalgebra_glm::vec3(
+                    self.original_vertices[vertex_idx].normal[0],
+                    self.original_vertices[vertex_idx].normal[1],
+                    self.original_vertices[vertex_idx].normal[2],
+                );
+                
+                // Multi-bone blending: transform by each bone and average
+                let mut blended_pos = nalgebra_glm::vec3(0.0, 0.0, 0.0);
+                let mut blended_normal = nalgebra_glm::vec3(0.0, 0.0, 0.0);
+                let num_bones = bone_indices.len();
+                
+                for &bone_idx in bone_indices {
+                    let bone_idx = bone_idx as usize;
+                    
+                    // Get bone or helper
+                    let bone = if bone_idx < animation_system.bones.len() {
+                        &animation_system.bones[bone_idx]
+                    } else {
+                        let helper_idx = bone_idx - animation_system.bones.len();
+                        if helper_idx < animation_system.helpers.len() {
+                            &animation_system.helpers[helper_idx]
+                        } else {
+                            continue;
+                        }
+                    };
+                    
+                    // Get pivot point for this bone
+                    let pivot = if bone_idx < animation_system.pivot_points.len() {
+                        animation_system.pivot_points[bone_idx]
+                    } else {
+                        nalgebra_glm::vec3(0.0, 0.0, 0.0)
+                    };
+                    
+                    // Transform vertex: (pos - pivot) * matrix + abs_vector
+                    // Based on Delphi code lines 2379-2400
+                    let relative_pos = original_pos - pivot;
+                    let transformed = bone.abs_matrix * relative_pos + bone.abs_vector;
+                    blended_pos += transformed;
+                    
+                    // Transform normal: normal * matrix (no translation)
+                    let transformed_normal = bone.abs_matrix * original_normal;
+                    blended_normal += transformed_normal;
+                }
+                
+                // Average the transformations (Delphi lines 2403-2410)
+                if num_bones > 0 {
+                    let weight = 1.0 / num_bones as f32;
+                    blended_pos *= weight;
+                    blended_normal *= weight;
+                    
+                    // Normalize the normal
+                    let normalized_normal = nalgebra_glm::normalize(&blended_normal);
+                    
+                    transformed_vertices[vertex_idx].position = [
+                        blended_pos.x,
+                        blended_pos.y,
+                        blended_pos.z,
+                    ];
+                    
+                    transformed_vertices[vertex_idx].normal = [
+                        normalized_normal.x,
+                        normalized_normal.y,
+                        normalized_normal.z,
+                    ];
+                }
+            }
             
-            // Transform normal
-            let normal = nalgebra_glm::vec3(vertex.normal[0], vertex.normal[1], vertex.normal[2]);
-            let transformed_normal = bone.abs_matrix * normal;
-            vertex.normal = [transformed_normal.x, transformed_normal.y, transformed_normal.z];
+            vertex_offset += num_vertices;
         }
 
         // Update GPU buffer
