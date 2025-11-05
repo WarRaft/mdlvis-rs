@@ -6,34 +6,25 @@ use crate::model::FilterMode;
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct MaterialUniform {
-    pub team_color_and_flags: [f32; 4], // team_color.xyz + use_team_color
+    pub team_color: [f32; 4], // team_color.rgb + replaceable_id (0=none, 1=team_color, 2=team_glow)
     pub material_type_and_wireframe: [f32; 4], // filter_mode + wireframe_mode + padding
-    pub extra_padding: [f32; 4], // Additional padding for alignment
+    pub extra_padding: [f32; 4], // Padding for alignment
 }
 
 impl MaterialUniform {
-    /// Create material uniform for normal rendering (no team color)
-    pub fn normal(wireframe_mode: bool, filter_mode: FilterMode) -> Self {
+    /// Create material uniform for rendering
+    pub fn new(team_color: [f32; 3], replaceable_id: u32, wireframe_mode: bool, filter_mode: FilterMode) -> Self {
         Self {
-            team_color_and_flags: [1.0, 1.0, 1.0, 0.0], // white color, no team color
+            team_color: [
+                team_color[0],
+                team_color[1],
+                team_color[2],
+                replaceable_id as f32,
+            ],
             material_type_and_wireframe: [
                 filter_mode_to_f32(filter_mode),
                 if wireframe_mode { 1.0 } else { 0.0 },
                 0.0,
-                0.0
-            ],
-            extra_padding: [0.0, 0.0, 0.0, 0.0],
-        }
-    }
-
-    /// Create material uniform for team color rendering
-    pub fn team_color(team_color: [f32; 3], wireframe_mode: bool, filter_mode: FilterMode, is_team_glow: bool) -> Self {
-        Self {
-            team_color_and_flags: [team_color[0], team_color[1], team_color[2], 1.0], // team color enabled
-            material_type_and_wireframe: [
-                filter_mode_to_f32(filter_mode),
-                if wireframe_mode { 1.0 } else { 0.0 },
-                if is_team_glow { 1.0 } else { 0.0 },
                 0.0
             ],
             extra_padding: [0.0, 0.0, 0.0, 0.0],

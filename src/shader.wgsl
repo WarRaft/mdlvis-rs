@@ -4,9 +4,9 @@ struct CameraUniform {
 };
 
 struct MaterialUniform {
-    team_color_and_flags: vec4<f32>, // team_color.rgb + use_team_color
-    material_type_and_wireframe: vec4<f32>, // filter_mode + wireframe_mode + is_team_glow + padding
-    extra_padding: vec4<f32>, // Additional padding for alignment
+    team_color: vec4<f32>, // team_color.rgb + replaceable_id (0=none, 1=team_color, 2=team_glow)
+    material_type_and_wireframe: vec4<f32>, // filter_mode + wireframe_mode + padding
+    extra_padding: vec4<f32>, // Padding for alignment
 };
 
 @group(0) @binding(0)
@@ -52,51 +52,25 @@ fn vs_main(
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Extract values from uniform structure
-    let team_color = material.team_color_and_flags.xyz;
-    let use_team_color = material.team_color_and_flags.w;
+    let team_color_rgb = material.team_color.xyz;
+    let replaceable_id = material.team_color.w; // 0=none, 1=team_color, 2=team_glow
     let filter_mode = material.material_type_and_wireframe.x;
     let wireframe_mode = material.material_type_and_wireframe.y;
-    let is_team_glow = material.material_type_and_wireframe.z;
     
     // In wireframe mode, use a solid color instead of texture
     if (wireframe_mode > 0.5) {
-        // Use bright colors for wireframe to make lines visible
-        // Green for normal materials, yellow for team color materials, red for glow/additive
         var wireframe_color = vec3<f32>(0.0, 1.0, 0.0); // Default green
-        if (use_team_color > 0.5) {
-            wireframe_color = vec3<f32>(1.0, 1.0, 0.0); // Yellow for team color
-        } else if (filter_mode >= 3.0) { // Additive or AddAlpha
+        if (filter_mode >= 3.0) { // Additive or AddAlpha
             wireframe_color = vec3<f32>(1.0, 0.5, 0.0); // Orange for glow effects
         }
         return vec4<f32>(wireframe_color, 1.0);
     }
     
-    // Normal rendering - sample texture
+    // Sample texture (for RID=1/2 textures are already generated with team color)
     var tex_color = textureSample(t_diffuse, s_diffuse, in.uv);
     
-    // Apply team color blending based on material type
-    if (use_team_color > 0.5) {
-        let is_team_glow = material.material_type_and_wireframe.z > 0.5;
-        
-        if (is_team_glow) {
-            // Team Glow (ReplaceableID=2): pre-multiplied alpha texture
-            // Texture RGB is already white * alpha, so we need to "un-premultiply" and multiply by team_color
-            // final_color = team_color * (texture.rgb / texture.a) * texture.a = team_color * texture.rgb
-            if (tex_color.a > 0.001) {
-                // Un-premultiply to get white (should be ~1,1,1), then multiply by team color
-                let white_intensity = tex_color.rgb / tex_color.a;
-                let glow_rgb = team_color * white_intensity * tex_color.a;
-                tex_color = vec4<f32>(glow_rgb, tex_color.a);
-            } else {
-                tex_color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-            }
-        } else {
-            // Regular Team Color (ReplaceableID=1): blend team color with texture using alpha
-            // Where alpha=0: show team_color, where alpha=1: show texture
-            let blended = mix(team_color, tex_color.rgb, tex_color.a);
-            tex_color = vec4<f32>(blended.x, blended.y, blended.z, tex_color.a);
-        }
-    }
+    // No need to apply team color here - RID textures are pre-generated with team color
+
     
     // Apply lighting only to non-glow materials
     var final_color = tex_color;
