@@ -6,7 +6,6 @@ pub struct Ui {
     selected_sequence: usize,
     animation_time: f32,
     is_playing: bool,
-    panel_width: f32,
 }
 
 impl Ui {
@@ -16,12 +15,7 @@ impl Ui {
             selected_sequence: 0,
             animation_time: 0.0,
             is_playing: false,
-            panel_width: 300.0, // Default width
         }
-    }
-
-    pub fn get_panel_width(&self) -> f32 {
-        self.panel_width
     }
 
     pub fn show(
@@ -31,25 +25,84 @@ impl Ui {
         camera_yaw: f32,
         camera_pitch: f32,
         settings: &mut Settings,
-    ) -> (bool, f32, Vec<bool>, bool) {
+        _texture_panel: &mut crate::texture::TexturePanel,
+    ) -> (bool, f32, Vec<bool>, bool, bool) {
         let mut reset_camera = false;
         let mut colors_changed = false;
+        let mut open_model = false;
 
-        // Draw left panel first to establish layout
-        let panel_response = egui::SidePanel::left("left_panel")
-            .default_width(250.0)
-            .resizable(true)
-            .show(ctx, |ui| {
-                colors_changed = self.show_settings(ui, settings, &mut reset_camera);
-                self.show_model_info(ui, model);
-                self.show_geosets(ui, model);
-                self.show_textures(ui, model);
-                self.show_animation(ui, model);
+        // Main menu bar at the top
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                // Open Model button
+                if ui.button("📁 Open Model").clicked() {
+                    open_model = true;
+                }
+                
+                ui.separator();
+                ui.label("📋 Windows:");
+                
+                if ui.button(if settings.ui.show_texture_panel { "✅ Textures" } else { "⬜ Textures" }).clicked() {
+                    settings.ui.show_texture_panel = !settings.ui.show_texture_panel;
+                    settings.ui.save();
+                }
+                
+                if ui.button(if settings.ui.show_display_settings { "✅ Display" } else { "⬜ Display" }).clicked() {
+                    settings.ui.show_display_settings = !settings.ui.show_display_settings;
+                    settings.ui.save();
+                }
+                
+                if ui.button(if settings.ui.show_colors { "✅ Colors" } else { "⬜ Colors" }).clicked() {
+                    settings.ui.show_colors = !settings.ui.show_colors;
+                    settings.ui.save();
+                }
+                
+                if ui.button(if settings.ui.show_model_info { "✅ Model Info" } else { "⬜ Model Info" }).clicked() {
+                    settings.ui.show_model_info = !settings.ui.show_model_info;
+                    settings.ui.save();
+                }
+                
+                if ui.button(if settings.ui.show_geosets { "✅ Geosets" } else { "⬜ Geosets" }).clicked() {
+                    settings.ui.show_geosets = !settings.ui.show_geosets;
+                    settings.ui.save();
+                }
+                
+                if ui.button(if settings.ui.show_materials { "✅ Materials" } else { "⬜ Materials" }).clicked() {
+                    settings.ui.show_materials = !settings.ui.show_materials;
+                    settings.ui.save();
+                }
+                
+                if ui.button(if settings.ui.show_animation { "✅ Animation" } else { "⬜ Animation" }).clicked() {
+                    settings.ui.show_animation = !settings.ui.show_animation;
+                    settings.ui.save();
+                }
             });
+        });
 
-        // Get panel width for viewport adjustment
-        let panel_width = panel_response.response.rect.width();
-        self.panel_width = panel_width; // Store for later use
+        // Show windows based on UI settings
+        if settings.ui.show_display_settings {
+            reset_camera = self.show_display_settings_window(ctx, settings);
+        }
+        
+        if settings.ui.show_colors {
+            colors_changed = self.show_colors_window(ctx, settings);
+        }
+        
+        if settings.ui.show_model_info {
+            self.show_model_info_window(ctx, model, &mut settings.ui);
+        }
+        
+        if settings.ui.show_geosets {
+            self.show_geosets_window(ctx, model, &mut settings.ui);
+        }
+        
+        if settings.ui.show_materials {
+            self.show_materials_window(ctx, model, &mut settings.ui);
+        }
+        
+        if settings.ui.show_animation {
+            self.show_animation_window(ctx, model, &mut settings.ui);
+        }
 
         // Draw axis gizmo in bottom-right corner
         let gizmo_size = 80.0;
@@ -131,88 +184,121 @@ impl Ui {
 
         (
             reset_camera,
-            panel_width,
+            0.0, // No panel width anymore
             self.show_geosets.clone(),
             colors_changed,
+            open_model,
         )
     }
 
-    fn show_settings(&mut self, ui: &mut egui::Ui, settings: &mut Settings, reset_camera: &mut bool) -> bool {
-        ui.collapsing("Display Settings", |ui| {
-            let mut changed = false;
-            
-            changed |= ui.checkbox(&mut settings.show_skeleton, "Show Skeleton").changed();
-            changed |= ui.checkbox(&mut settings.wireframe_mode, "Wireframe Mode").changed();
-            changed |= ui.checkbox(&mut settings.show_grid, "Show Grid").changed();
-            changed |= ui.checkbox(&mut settings.show_bounding_box, "Show Bounding Box").changed();
-
-            ui.separator();
-            ui.label("Far Plane (View Distance):");
-            changed |= ui
-                .add(
-                    egui::Slider::new(&mut settings.far_plane, 100.0..=5000.0)
-                        .suffix(" units")
-                        .logarithmic(true),
-                )
-                .changed();
-
-            if changed {
-                settings.save();
-            }
-
-            ui.separator();
-
-            if ui.button("Reset Camera").clicked() {
-                *reset_camera = true;
-            }
-        });
+    fn show_display_settings_window(
+        &mut self,
+        ctx: &egui::Context,
+        settings: &mut Settings,
+    ) -> bool {
+        let mut reset_camera = false;
         
-        // Colors tab
+        egui::Window::new("🎨 Display Settings")
+            .default_width(300.0)
+            .resizable(true)
+            .open(&mut settings.ui.show_display_settings)
+            .show(ctx, |ui| {
+                let mut changed = false;
+                
+                changed |= ui.checkbox(&mut settings.display.show_skeleton, "Show Skeleton").changed();
+                changed |= ui.checkbox(&mut settings.display.wireframe_mode, "Wireframe Mode").changed();
+                changed |= ui.checkbox(&mut settings.display.show_grid, "Show Grid").changed();
+                changed |= ui.checkbox(&mut settings.display.show_bounding_box, "Show Bounding Box").changed();
+
+                ui.separator();
+                ui.label("Far Plane (View Distance):");
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut settings.display.far_plane, 100.0..=5000.0)
+                            .suffix(" units")
+                            .logarithmic(true),
+                    )
+                    .changed();
+
+                if changed {
+                    settings.display.save();
+                }
+
+                ui.separator();
+
+                if ui.button("Reset Camera").clicked() {
+                    reset_camera = true;
+                }
+            });
+        
+        if !settings.ui.show_display_settings {
+            settings.ui.save();
+        }
+        
+        reset_camera
+    }
+
+    fn show_colors_window(
+        &mut self,
+        ctx: &egui::Context,
+        settings: &mut Settings,
+    ) -> bool {
         let mut colors_changed = false;
-        ui.collapsing("Colors", |ui| {
-            let mut changed = false;
-            
-            ui.label("Team Color:");
-            changed |= ui.color_edit_button_rgb(&mut settings.team_color).changed();
-            
-            ui.label("Skybox Color:");
-            changed |= ui.color_edit_button_rgb(&mut settings.skybox_color).changed();
-            
-            ui.label("Grid Major Lines:");
-            changed |= ui.color_edit_button_rgb(&mut settings.grid_major_color).changed();
-            
-            ui.label("Grid Minor Lines:");
-            changed |= ui.color_edit_button_rgb(&mut settings.grid_minor_color).changed();
-            
-            ui.label("Bounding Box Color:");
-            changed |= ui.color_edit_button_rgb(&mut settings.bounding_box_color).changed();
-            
-            ui.separator();
-            
-            if ui.button("Reset Colors to Default").clicked() {
-                let default_settings = Settings::default();
-                settings.team_color = default_settings.team_color;
-                settings.skybox_color = default_settings.skybox_color;
-                settings.grid_major_color = default_settings.grid_major_color;
-                settings.grid_minor_color = default_settings.grid_minor_color;
-                settings.bounding_box_color = default_settings.bounding_box_color;
-                changed = true;
-            }
-            
-            if changed {
-                settings.save();
-                colors_changed = true;
-            }
-        });
+        
+        egui::Window::new("🌈 Colors")
+            .default_width(300.0)
+            .resizable(true)
+            .open(&mut settings.ui.show_colors)
+            .show(ctx, |ui| {
+                let mut changed = false;
+                
+                ui.label("Team Color:");
+                changed |= ui.color_edit_button_rgb(&mut settings.colors.team_color).changed();
+                
+                ui.label("Skybox Color:");
+                changed |= ui.color_edit_button_rgb(&mut settings.colors.skybox_color).changed();
+                
+                ui.label("Grid Major Lines:");
+                changed |= ui.color_edit_button_rgb(&mut settings.colors.grid_major_color).changed();
+                
+                ui.label("Grid Minor Lines:");
+                changed |= ui.color_edit_button_rgb(&mut settings.colors.grid_minor_color).changed();
+                
+                ui.label("Bounding Box Color:");
+                changed |= ui.color_edit_button_rgb(&mut settings.colors.bounding_box_color).changed();
+                
+                ui.separator();
+                
+                if ui.button("Reset to Defaults").clicked() {
+                    settings.colors = crate::settings::ColorSettings::default();
+                    changed = true;
+                }
+                
+                if changed {
+                    settings.colors.save();
+                    colors_changed = true;
+                }
+            });
+        
+        if !settings.ui.show_colors {
+            settings.ui.save();
+        }
         
         colors_changed
     }
 
-
-
-    fn show_model_info(&mut self, ui: &mut egui::Ui, model: &Option<Model>) {
-        if let Some(model) = model {
-            ui.collapsing("Model Info", |ui| {
+    fn show_model_info_window(
+        &mut self,
+        ctx: &egui::Context,
+        model: &Option<Model>,
+        ui_settings: &mut crate::settings::UiSettings,
+    ) {
+        egui::Window::new("ℹ️ Model Info")
+            .default_width(300.0)
+            .resizable(true)
+            .open(&mut ui_settings.show_model_info)
+            .show(ctx, |ui| {
+                if let Some(model) = model {
                 ui.label(format!("Name: {}", model.name));
                 ui.separator();
 
@@ -230,123 +316,158 @@ impl Ui {
                 ui.label(format!("Sequences: {}", model.sequences.len()));
                 ui.label(format!("Bones: {}", model.bones.len()));
                 ui.label(format!("Helpers: {}", model.helpers.len()));
-            });
-        } else {
-            ui.label("No model loaded");
-            if ui.button("Load Model").clicked() {
-                // TODO: Implement file dialog
-            }
-        }
-    }
-
-    fn show_geosets(&mut self, ui: &mut egui::Ui, model: &Option<Model>) {
-        if let Some(model) = model {
-            ui.collapsing("Geosets", |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(150.0)
-                    .show(ui, |ui| {
-                        for (i, geoset) in model.geosets.iter().enumerate() {
-                            if self.show_geosets.len() <= i {
-                                self.show_geosets.push(true);
-                            }
-
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut self.show_geosets[i], format!("#{}", i));
-                                ui.label(format!(
-                                    "{} verts, {} faces",
-                                    geoset.vertices.len(),
-                                    geoset.faces.len()
-                                ));
-                            });
-                        }
-                    });
-            });
-        }
-    }
-
-    fn show_textures(&self, ui: &mut egui::Ui, model: &Option<Model>) {
-        if let Some(model) = model {
-            ui.collapsing("Textures", |ui| {
-                if model.textures.is_empty() {
-                    ui.label("No textures");
                 } else {
-                    ui.label(format!("{} textures", model.textures.len()));
-                    ui.separator();
+                    ui.label("No model loaded");
+                    if ui.button("Load Model").clicked() {
+                        // TODO: Implement file dialog
+                    }
+                }
+            });
+        
+        if !ui_settings.show_model_info {
+            ui_settings.save();
+        }
+    }
 
+    fn show_geosets_window(
+        &mut self,
+        ctx: &egui::Context,
+        model: &Option<Model>,
+        ui_settings: &mut crate::settings::UiSettings,
+    ) {
+        egui::Window::new("📦 Geosets")
+            .default_width(300.0)
+            .resizable(true)
+            .open(&mut ui_settings.show_geosets)
+            .show(ctx, |ui| {
+                if let Some(model) = model {
                     egui::ScrollArea::vertical()
-                        .max_height(200.0)
                         .show(ui, |ui| {
-                            for (i, texture) in model.textures.iter().enumerate() {
-                                ui.horizontal(|ui| {
-                                    ui.label(format!("#{}", i));
+                            for (i, geoset) in model.geosets.iter().enumerate() {
+                                if self.show_geosets.len() <= i {
+                                    self.show_geosets.push(true);
+                                }
 
-                                    if texture.replaceable_id == 1 {
-                                        ui.colored_label(
-                                            egui::Color32::from_rgb(255, 100, 100),
-                                            "Team Color",
-                                        );
-                                    } else if texture.replaceable_id == 2 {
-                                        ui.colored_label(
-                                            egui::Color32::from_rgb(255, 150, 150),
-                                            "Team Glow",
-                                        );
-                                    } else if texture.replaceable_id > 0 {
-                                        ui.colored_label(
-                                            egui::Color32::from_rgb(255, 180, 100),
-                                            format!("Replaceable ID {}", texture.replaceable_id),
-                                        );
-                                    } else if !texture.filename.is_empty() {
-                                        ui.label(&texture.filename);
-                                        if texture.image_data.is_some() {
-                                            ui.colored_label(egui::Color32::GREEN, "✓");
-                                        }
-                                    } else {
-                                        ui.colored_label(egui::Color32::GRAY, "(empty)");
-                                    }
+                                ui.horizontal(|ui| {
+                                    ui.checkbox(&mut self.show_geosets[i], format!("#{}", i));
+                                    ui.label(format!(
+                                        "{} verts, {} faces",
+                                        geoset.vertices.len(),
+                                        geoset.faces.len()
+                                    ));
                                 });
                             }
                         });
+                } else {
+                    ui.label("No model loaded");
                 }
             });
+        
+        if !ui_settings.show_geosets {
+            ui_settings.save();
         }
     }
 
-    fn show_animation(&mut self, ui: &mut egui::Ui, model: &Option<Model>) {
-        if let Some(model) = model {
-            if model.sequences.is_empty() {
-                return;
-            }
-
-            ui.collapsing("Animation", |ui| {
-                egui::ComboBox::from_label("Sequence")
-                    .selected_text(&model.sequences[self.selected_sequence].name)
-                    .show_ui(ui, |ui| {
-                        for (i, seq) in model.sequences.iter().enumerate() {
-                            ui.selectable_value(&mut self.selected_sequence, i, &seq.name);
-                        }
-                    });
-
-                // Show sequence details
-                let seq = &model.sequences[self.selected_sequence];
-                ui.label(format!("Frames: {} - {}", seq.start_frame, seq.end_frame));
-                ui.label(format!(
-                    "Duration: {} frames",
-                    seq.end_frame - seq.start_frame
-                ));
-                ui.label(format!("Non-looping: {}", seq.non_looping));
-                if let Some(rarity) = seq.rarity {
-                    ui.label(format!("Rarity: {}", rarity));
+    fn show_materials_window(
+        &mut self,
+        ctx: &egui::Context,
+        model: &Option<Model>,
+        ui_settings: &mut crate::settings::UiSettings,
+    ) {
+        egui::Window::new("🎨 Materials")
+            .default_width(400.0)
+            .resizable(true)
+            .open(&mut ui_settings.show_materials)
+            .show(ctx, |ui| {
+                if let Some(model) = model {
+                    egui::ScrollArea::vertical()
+                        .show(ui, |ui| {
+                            for (mat_id, material) in model.materials.iter().enumerate() {
+                                ui.group(|ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    
+                                    ui.heading(format!("Material #{}", mat_id));
+                                    
+                                    ui.label(format!("Layers: {}", material.layers.len()));
+                                    
+                                    for (layer_id, layer) in material.layers.iter().enumerate() {
+                                        ui.separator();
+                                        ui.label(format!("  Layer #{}", layer_id));
+                                        
+                                        if let Some(tex_id) = layer.texture_id {
+                                            ui.label(format!("    Texture ID: {}", tex_id));
+                                        } else {
+                                            ui.label("    Texture ID: None");
+                                        }
+                                        
+                                        ui.label(format!("    Filter Mode: {:?}", layer.filter_mode));
+                                        ui.label(format!("    Alpha: {:.2}", layer.alpha));
+                                    }
+                                });
+                                ui.add_space(4.0);
+                            }
+                        });
+                } else {
+                    ui.label("No model loaded");
                 }
-
-                ui.separator();
-
-                ui.horizontal(|ui| {
-                    if ui.button(if self.is_playing { "⏸" } else { "▶" }).clicked() {
-                        self.is_playing = !self.is_playing;
-                    }
-                    ui.add(egui::Slider::new(&mut self.animation_time, 0.0..=1.0).text("Time"));
-                });
             });
+        
+        if !ui_settings.show_materials {
+            ui_settings.save();
+        }
+    }
+
+    fn show_animation_window(
+        &mut self,
+        ctx: &egui::Context,
+        model: &Option<Model>,
+        ui_settings: &mut crate::settings::UiSettings,
+    ) {
+        egui::Window::new("🎬 Animation")
+            .default_width(300.0)
+            .resizable(true)
+            .open(&mut ui_settings.show_animation)
+            .show(ctx, |ui| {
+                if let Some(model) = model {
+                    if !model.sequences.is_empty() {
+                        egui::ComboBox::from_label("Sequence")
+                            .selected_text(&model.sequences[self.selected_sequence].name)
+                            .show_ui(ui, |ui| {
+                                for (i, seq) in model.sequences.iter().enumerate() {
+                                    ui.selectable_value(&mut self.selected_sequence, i, &seq.name);
+                                }
+                            });
+
+                        // Show sequence details
+                        let seq = &model.sequences[self.selected_sequence];
+                        ui.label(format!("Frames: {} - {}", seq.start_frame, seq.end_frame));
+                        ui.label(format!(
+                            "Duration: {} frames",
+                            seq.end_frame - seq.start_frame
+                        ));
+                        ui.label(format!("Non-looping: {}", seq.non_looping));
+                        if let Some(rarity) = seq.rarity {
+                            ui.label(format!("Rarity: {}", rarity));
+                        }
+
+                        ui.separator();
+
+                        ui.horizontal(|ui| {
+                            if ui.button(if self.is_playing { "⏸" } else { "▶" }).clicked() {
+                                self.is_playing = !self.is_playing;
+                            }
+                            ui.add(egui::Slider::new(&mut self.animation_time, 0.0..=1.0).text("Time"));
+                        });
+                    } else {
+                        ui.label("No animations in model");
+                    }
+                } else {
+                    ui.label("No model loaded");
+                }
+            });
+        
+        if !ui_settings.show_animation {
+            ui_settings.save();
         }
     }
 }

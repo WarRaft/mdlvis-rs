@@ -1,5 +1,6 @@
 use crate::material_system::MaterialUniform;
 use crate::model::{FilterMode, Model};
+use crate::renderer::camera::CameraState;
 use crate::renderer::geoset_render_info::GeosetRenderInfo;
 use crate::renderer::line_vertex::LineVertex;
 use crate::renderer::vertex::Vertex;
@@ -34,6 +35,7 @@ pub struct Renderer {
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     texture_bind_groups: Vec<wgpu::BindGroup>, // One bind group per texture
+    texture_views: Vec<Option<wgpu::TextureView>>, // Store texture views for egui
     texture_bind_group_layout: wgpu::BindGroupLayout,
     // Material uniforms - three bind groups: normal, team color, team glow
     material_buffer_normal: wgpu::Buffer,
@@ -49,14 +51,7 @@ pub struct Renderer {
     grid_major_color: [f32; 3],
     grid_minor_color: [f32; 3],
     skybox_color: [f32; 3],
-    camera_yaw: f32,
-    camera_pitch: f32,
-    camera_distance: f32,
-    camera_target: [f32; 3], // Point camera orbits around
-    default_camera_yaw: f32,
-    default_camera_pitch: f32,
-    default_camera_distance: f32,
-    default_camera_target: [f32; 3],
+    camera: CameraState,
     model_center: [f32; 3],
     egui_renderer: egui_wgpu::Renderer,
     egui_ctx: egui::Context,
@@ -879,6 +874,7 @@ impl Renderer {
             camera_buffer,
             camera_bind_group,
             texture_bind_groups,
+            texture_views: Vec::new(),
             texture_bind_group_layout,
             material_buffer_normal,
             material_buffer_team,
@@ -892,14 +888,12 @@ impl Renderer {
             grid_major_color: [0.2, 0.2, 0.2],         // Dark gray major grid
             grid_minor_color: [0.4, 0.4, 0.4],         // Light gray minor grid
             skybox_color: [0.3, 0.5, 0.8],             // Light blue skybox
-            camera_yaw: 0.0,                           // 0 degrees - front view
-            camera_pitch: std::f32::consts::PI * 0.15, // 27 degrees - look slightly down at model
-            camera_distance: 500.0,
-            camera_target: [0.0, 0.0, 0.0],            // Look at origin initially
-            default_camera_yaw: 0.0,
-            default_camera_pitch: std::f32::consts::PI * 0.15,
-            default_camera_distance: 500.0,
-            default_camera_target: [0.0, 0.0, 0.0],
+            camera: CameraState::new(
+                0.0,                                   // yaw: front view
+                std::f32::consts::PI * 0.15,          // pitch: 27 degrees down
+                500.0,                                 // distance
+                [0.0, 0.0, 0.0],                      // target: origin
+            ),
             model_center: [0.0, 0.0, 0.0],
             egui_renderer,
             egui_ctx,
@@ -942,16 +936,16 @@ impl Renderer {
         let proj = nalgebra_glm::perspective(aspect, 45.0_f32.to_radians(), 0.1, far_plane);
 
         let eye = nalgebra_glm::vec3(
-            self.camera_target[0]
-                + self.camera_distance * self.camera_yaw.cos() * self.camera_pitch.cos(),
-            self.camera_target[1]
-                + self.camera_distance * self.camera_yaw.sin() * self.camera_pitch.cos(),
-            self.camera_target[2] + self.camera_distance * self.camera_pitch.sin(),
+            self.camera.target[0]
+                + self.camera.distance * self.camera.yaw.cos() * self.camera.pitch.cos(),
+            self.camera.target[1]
+                + self.camera.distance * self.camera.yaw.sin() * self.camera.pitch.cos(),
+            self.camera.target[2] + self.camera.distance * self.camera.pitch.sin(),
         );
         let center = nalgebra_glm::vec3(
-            self.camera_target[0],
-            self.camera_target[1],
-            self.camera_target[2],
+            self.camera.target[0],
+            self.camera.target[1],
+            self.camera.target[2],
         );
         let up = nalgebra_glm::vec3(0.0, 0.0, 1.0); // Z-up coordinate system
         let view = nalgebra_glm::look_at(&eye, &center, &up);
@@ -1660,94 +1654,35 @@ impl Renderer {
     }
 
     pub fn rotate_camera(&mut self, delta_x: f32, delta_y: f32) {
-        self.camera_yaw -= delta_x * 0.01; // Inverted for natural rotation
-        self.camera_pitch += delta_y * 0.01;
-        self.camera_pitch = self.camera_pitch.clamp(-1.5, 1.5);
-    }
-
-    pub fn zoom_camera(&mut self, delta: f32, cursor_ndc: Option<[f32; 2]>) {
-        let zoom_factor = 1.0 - delta * 0.1;
-        let new_distance = (self.camera_distance * zoom_factor).clamp(10.0, 1000.0);
-        
-        if let Some(ndc) = cursor_ndc {
-            // Zoom towards cursor position
-            // Calculate camera forward vector
-            let forward = nalgebra_glm::normalize(&nalgebra_glm::vec3(
-                self.camera_yaw.cos() * self.camera_pitch.cos(),
-                self.camera_yaw.sin() * self.camera_pitch.cos(),
-                self.camera_pitch.sin(),
-            ));
-            let right = nalgebra_glm::normalize(&nalgebra_glm::cross(&forward, &nalgebra_glm::vec3(0.0, 0.0, 1.0)));
-            let up = nalgebra_glm::cross(&right, &forward);
-            
-            // Calculate cursor direction (approximation using NDC)
-            let aspect = self.config.width as f32 / self.config.height as f32;
-            let fov_scale = (45.0_f32.to_radians() / 2.0).tan();
-            let cursor_dir = nalgebra_glm::normalize(&(
-                forward + right * ndc[0] * fov_scale * aspect + up * ndc[1] * fov_scale
-            ));
-            
-            // Move camera target towards cursor direction
-            let distance_change = self.camera_distance - new_distance;
-            let target_offset = cursor_dir * distance_change * 0.5; // 0.5 for smooth zoom
-            
-            self.camera_target[0] += target_offset.x;
-            self.camera_target[1] += target_offset.y;
-            self.camera_target[2] += target_offset.z;
-        }
-        
-        self.camera_distance = new_distance;
-    }
-
-    pub fn reset_camera(&mut self) {
-        self.camera_yaw = self.default_camera_yaw;
-        self.camera_pitch = self.default_camera_pitch;
-        self.camera_distance = self.default_camera_distance;
-        self.camera_target = self.default_camera_target;
-    }
-
-    pub fn pan_camera(&mut self, delta_x: f32, delta_y: f32) {
-        // Calculate camera's right and up vectors
-        let forward = nalgebra_glm::vec3(
-            self.camera_yaw.cos() * self.camera_pitch.cos(),
-            self.camera_yaw.sin() * self.camera_pitch.cos(),
-            self.camera_pitch.sin(),
-        );
-        let right = nalgebra_glm::normalize(&nalgebra_glm::cross(
-            &forward,
-            &nalgebra_glm::vec3(0.0, 0.0, 1.0),
-        ));
-        let up = nalgebra_glm::cross(&right, &forward);
-
-        // Pan speed based on distance
-        let pan_speed = self.camera_distance * 0.001;
-
-        // Move target
-        self.camera_target[0] += right.x * delta_x * pan_speed + up.x * delta_y * pan_speed;
-        self.camera_target[1] += right.y * delta_x * pan_speed + up.y * delta_y * pan_speed;
-        self.camera_target[2] += right.z * delta_x * pan_speed + up.z * delta_y * pan_speed;
+        self.camera.yaw -= delta_x * 0.01;
+        self.camera.pitch += delta_y * 0.01;
+        self.camera.pitch = self.camera.pitch.clamp(-1.5, 1.5);
     }
 
     pub fn get_camera_orientation(&self) -> (f32, f32) {
-        (self.camera_yaw, self.camera_pitch)
+        self.camera.get_orientation()
+    }
+
+    pub fn update_camera_state(&mut self, camera_state: &CameraState) {
+        self.camera = camera_state.clone();
     }
 
     pub fn update_colors(&mut self, settings: &crate::settings::Settings, model: Option<&Model>) {
         // Update team color
-        self.set_team_color(settings.team_color);
+        self.set_team_color(settings.colors.team_color);
 
         // Update grid colors
-        self.grid_major_color = settings.grid_major_color;
-        self.grid_minor_color = settings.grid_minor_color;
+        self.grid_major_color = settings.colors.grid_major_color;
+        self.grid_minor_color = settings.colors.grid_minor_color;
         self.regenerate_grid();
 
         // Update skybox color
-        self.skybox_color = settings.skybox_color;
+        self.skybox_color = settings.colors.skybox_color;
 
         // Update bounding box color if model is loaded
         if let Some(model) = model {
-            if settings.show_bounding_box {
-                self.generate_bounding_box_lines_with_color(model, settings.bounding_box_color);
+            if settings.display.show_bounding_box {
+                self.generate_bounding_box_lines_with_color(model, settings.colors.bounding_box_color);
             }
         }
     }
@@ -1909,8 +1844,11 @@ impl Renderer {
             ],
         });
 
-        // Ensure the vector is large enough
-        while self.texture_bind_groups.len() <= texture_id {
+        // Ensure both vectors are large enough
+        let required_size = texture_id + 1;
+        
+        // Expand bind_groups if needed
+        while self.texture_bind_groups.len() < required_size {
             // Fill gaps with white texture bind groups
             let white_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("White Texture Bind Group (Gap Filler)"),
@@ -1928,9 +1866,15 @@ impl Renderer {
             });
             self.texture_bind_groups.push(white_bind_group);
         }
+        
+        // Expand texture_views if needed
+        while self.texture_views.len() < required_size {
+            self.texture_views.push(None);
+        }
 
-        // Update the bind group for this texture ID
+        // Update the bind group and view for this texture ID
         self.texture_bind_groups[texture_id] = bind_group;
+        self.texture_views[texture_id] = Some(texture_view);
 
         println!("Loaded texture {} ({}x{})", texture_id, width, height);
     }
@@ -1995,5 +1939,43 @@ impl Renderer {
 
         self.load_texture_from_rgba(&rgba_data, 32, 32, texture_id);
         println!("Created team glow texture at index {}", texture_id);
+    }
+    
+    /// Create team color texture (simple solid color texture)
+    pub fn create_team_color_texture(&mut self, texture_id: usize) {
+        // Create a simple 4x4 texture with the team color
+        let mut rgba_data = Vec::with_capacity(4 * 4 * 4);
+        
+        // Convert team color from [f32; 3] to [u8; 4] with full opacity
+        let r = (self.team_color[0] * 255.0) as u8;
+        let g = (self.team_color[1] * 255.0) as u8;
+        let b = (self.team_color[2] * 255.0) as u8;
+        
+        // Fill 4x4 texture with team color
+        for _ in 0..16 {
+            rgba_data.push(r);
+            rgba_data.push(g);
+            rgba_data.push(b);
+            rgba_data.push(255); // Full opacity
+        }
+        
+        self.load_texture_from_rgba(&rgba_data, 4, 4, texture_id);
+        println!("Created team color texture at index {}", texture_id);
+    }
+    
+    /// Get egui TextureId for a loaded texture
+    pub fn get_egui_texture_id(&mut self, texture_id: usize) -> Option<egui::TextureId> {
+        if texture_id < self.texture_views.len() {
+            if let Some(texture_view) = &self.texture_views[texture_id] {
+                // Register texture in egui renderer and get TextureId
+                let egui_texture_id = self.egui_renderer.register_native_texture(
+                    &self.device,
+                    texture_view,
+                    wgpu::FilterMode::Linear,
+                );
+                return Some(egui_texture_id);
+            }
+        }
+        None
     }
 }
