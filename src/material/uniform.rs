@@ -1,6 +1,6 @@
 /// Material system for handling different material types and their rendering properties
 use bytemuck::{Pod, Zeroable};
-use crate::model::FilterMode;
+use super::FilterMode;
 
 /// Material uniform data that matches WGSL structure
 #[repr(C)]
@@ -22,25 +22,12 @@ impl MaterialUniform {
                 replaceable_id as f32,
             ],
             material_type_and_wireframe: [
-                filter_mode_to_f32(filter_mode),
+                filter_mode.to_f32(),
                 if wireframe_mode { 1.0 } else { 0.0 },
                 layer_alpha,
                 shading_flags as f32,
             ],
             extra_padding: [0.0, 0.0, 0.0, 0.0],
         }
-    }
-}
-
-/// Convert FilterMode enum to f32 for shader
-fn filter_mode_to_f32(filter_mode: FilterMode) -> f32 {
-    match filter_mode {
-        FilterMode::Opaque => 0.0,
-        FilterMode::Transparent => 1.0,
-        FilterMode::Blend => 2.0,
-        FilterMode::Additive => 3.0,
-        FilterMode::AddAlpha => 4.0,
-        FilterMode::Modulate => 5.0,
-        FilterMode::Modulate2x => 6.0,
     }
 }

@@ -8,9 +8,9 @@ pub struct Ui {
     current_frame: f32,
     is_playing: bool,
     is_looping: bool,
-    use_animation: bool, // Flag: true = use animated transforms, false = use original parsed data
+    use_animation: bool,
     last_update_time: f64,
-    last_frame_time: f64, // Time when we last processed a frame (to prevent multiple updates per frame)
+    last_frame_time: f64,
 }
 
 impl Ui {
@@ -21,7 +21,7 @@ impl Ui {
             current_frame: 0.0,
             is_playing: false,
             is_looping: true,
-            use_animation: false, // Start with original parsed data
+            use_animation: false,
             last_update_time: 0.0,
             last_frame_time: 0.0,
         }
@@ -87,10 +87,12 @@ impl Ui {
                 self.is_playing = false;
             }
         }
-    }    pub fn show(
+    }
+
+    pub fn show(
         &mut self,
         ctx: &egui::Context,
-        model: &Option<Model>,
+        model: &mut Option<Model>,
         camera_yaw: f32,
         camera_pitch: f32,
         settings: &mut Settings,
@@ -459,7 +461,7 @@ impl Ui {
     fn show_materials_window(
         &mut self,
         ctx: &egui::Context,
-        model: &Option<Model>,
+        model: &mut Option<Model>,
         ui_settings: &mut crate::settings::UiSettings,
         renderer: &mut crate::renderer::renderer::Renderer,
     ) {
@@ -469,17 +471,21 @@ impl Ui {
             .open(&mut ui_settings.show_materials)
             .show(ctx, |ui| {
                 if let Some(model) = model {
+                    // Save immutable references before mutable iteration
+                    let textures = &model.textures;
+                    
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
-                            for (mat_id, material) in model.materials.iter().enumerate() {
-                                ui.group(|ui| {
-                                    ui.set_min_width(ui.available_width());
-                                    
-                                    ui.horizontal(|ui| {
-                                        ui.heading(format!("Material #{}", mat_id));
-                                        
-                                        // JSON copy button
-                                        if ui.button("📋 JSON").on_hover_text("Copy material info as JSON to clipboard").clicked() {
+                            for (mat_id, material) in model.materials.iter_mut().enumerate() {
+                                // Use CollapsingHeader for each material
+                                let header_id = egui::Id::new(("material_header", mat_id));
+                                egui::CollapsingHeader::new(format!("🎨 Material #{} ({} layers)", mat_id, material.layers.len()))
+                                    .id_source(header_id)
+                                    .default_open(false)
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            // JSON copy button
+                                            if ui.button("📋 JSON").on_hover_text("Copy material info as JSON to clipboard").clicked() {
                                             // Build JSON representation
                                             let mut json = format!(
                                                 "{{\n  \"material_id\": {},\n  \"layers\": [\n",
@@ -493,7 +499,7 @@ impl Ui {
                                                 if let Some(tex_id) = layer.texture_id {
                                                     json.push_str(&format!("      \"texture_id\": {},\n", tex_id));
                                                     
-                                                    if let Some(texture_info) = model.textures.get(tex_id) {
+                                                    if let Some(texture_info) = textures.get(tex_id) {
                                                         json.push_str(&format!("      \"filename\": \"{}\",\n", texture_info.filename));
                                                         json.push_str(&format!("      \"replaceable_id\": {},\n", texture_info.replaceable_id));
                                                     }
@@ -529,9 +535,18 @@ impl Ui {
                                     
                                     ui.label(format!("Layers: {}", material.layers.len()));
                                     
-                                    for (layer_id, layer) in material.layers.iter().enumerate() {
+                                    // No need to initialize - data is in the model now
+                                    
+                                    for (layer_id, layer) in material.layers.iter_mut().enumerate() {
                                         ui.separator();
-                                        ui.label(format!("  Layer #{}", layer_id));
+                                        
+                                        // Layer header with checkbox - edit model directly
+                                        ui.horizontal(|ui| {
+                                            ui.checkbox(&mut layer.enabled, "");
+                                            ui.label(egui::RichText::new(format!("Layer #{}", layer_id)).strong());
+                                        });
+                                        
+                                        ui.add_enabled_ui(layer.enabled, |ui| {
                                         
                                         if let Some(tex_id) = layer.texture_id {
                                             // Texture preview with collapsing header
@@ -539,7 +554,7 @@ impl Ui {
                                             let header_id = egui::Id::new(("texture_preview", mat_id, layer_id));
                                             
                                             // Build header text with RID if present
-                                            let header_text = if let Some(texture_info) = model.textures.get(tex_id) {
+                                            let header_text = if let Some(texture_info) = textures.get(tex_id) {
                                                 if texture_info.replaceable_id == 1 {
                                                     format!("    📎 Texture #{} [RID: 1 Team Color]", tex_id)
                                                 } else if texture_info.replaceable_id == 2 {
@@ -558,7 +573,7 @@ impl Ui {
                                                 .default_open(false)
                                                 .show(ui, |ui| {
                                                     // Don't use indent - CollapsingHeader already has proper indentation
-                                                    if let Some(texture_info) = model.textures.get(tex_id) {
+                                                    if let Some(texture_info) = textures.get(tex_id) {
                                                         // Show texture info
                                                         if !texture_info.filename.is_empty() {
                                                             ui.label(egui::RichText::new(&texture_info.filename).small());
@@ -586,18 +601,166 @@ impl Ui {
                                             ui.label("    Texture ID: None");
                                         }
                                         
-                                        ui.label(format!("    Filter Mode: {:?}", layer.filter_mode));
+                                        // Filter Mode with collapsible checkboxes in column
+                                        let current_filter_mode = layer.filter_mode_override
+                                            .as_ref()
+                                            .unwrap_or(&layer.filter_mode);
                                         
-                                        // Display shading flags (already parsed)
-                                        if !layer.shading_flags.is_empty() {
-                                            let flags_names: Vec<&str> = layer.shading_flags.iter().map(|f| f.name()).collect();
-                                            ui.label(format!("    Shading: {}", flags_names.join(", ")));
-                                        }
+                                        let filter_name = current_filter_mode.name();
                                         
-                                        ui.label(format!("    Alpha: {:.2}", layer.alpha));
+                                        let filter_header_id = egui::Id::new(("filter_mode", mat_id, layer_id));
+                                        egui::CollapsingHeader::new(format!("    FilterMode: {}", filter_name))
+                                            .id_source(filter_header_id)
+                                            .default_open(false)
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.add_space(20.0);
+                                                    
+                                                    // Reset button
+                                                    if ui.small_button("↺").on_hover_text("Reset to original").clicked() {
+                                                        layer.filter_mode_override = None;
+                                                    }
+                                                    
+                                                    if layer.filter_mode_override.is_some() {
+                                                        ui.label(egui::RichText::new("(modified)").small().weak());
+                                                    }
+                                                });
+                                                
+                                                ui.horizontal(|ui| {
+                                                    ui.add_space(20.0);
+                                                    ui.vertical(|ui| {
+                                                        let current_mode = layer.filter_mode_override
+                                                            .clone()
+                                                            .unwrap_or(layer.filter_mode.clone());
+                                                        
+                                                        if ui.radio(matches!(current_mode, crate::model::FilterMode::None), "None").clicked() {
+                                                            layer.filter_mode_override = Some(crate::model::FilterMode::None);
+                                                        }
+                                                        if ui.radio(matches!(current_mode, crate::model::FilterMode::Transparent), "Transparent").clicked() {
+                                                            layer.filter_mode_override = Some(crate::model::FilterMode::Transparent);
+                                                        }
+                                                        if ui.radio(matches!(current_mode, crate::model::FilterMode::Blend), "Blend").clicked() {
+                                                            layer.filter_mode_override = Some(crate::model::FilterMode::Blend);
+                                                        }
+                                                        if ui.radio(matches!(current_mode, crate::model::FilterMode::Additive), "Additive").clicked() {
+                                                            layer.filter_mode_override = Some(crate::model::FilterMode::Additive);
+                                                        }
+                                                        if ui.radio(matches!(current_mode, crate::model::FilterMode::AddAlpha), "AddAlpha").clicked() {
+                                                            layer.filter_mode_override = Some(crate::model::FilterMode::AddAlpha);
+                                                        }
+                                                        if ui.radio(matches!(current_mode, crate::model::FilterMode::Modulate), "Modulate").clicked() {
+                                                            layer.filter_mode_override = Some(crate::model::FilterMode::Modulate);
+                                                        }
+                                                        if ui.radio(matches!(current_mode, crate::model::FilterMode::Modulate2x), "Modulate2x").clicked() {
+                                                            layer.filter_mode_override = Some(crate::model::FilterMode::Modulate2x);
+                                                        }
+                                                    });
+                                                });
+                                            });
+                                        
+                                        // Shading flags with active checkboxes in column (collapsible)
+                                        let current_shading_flags = layer.shading_flags_override
+                                            .as_ref()
+                                            .unwrap_or(&layer.shading_flags);
+                                        
+                                        // Build bitmask (Unshaded, SphereEnvMap, TwoSided, Unfogged, NoDepthTest, NoDepthSet)
+                                        let shading_mask = format!("{}{}{}{}{}{}",
+                                            if current_shading_flags.contains(&crate::model::ShadingFlags::Unshaded) { "1" } else { "0" },
+                                            if current_shading_flags.contains(&crate::model::ShadingFlags::SphereEnvMap) { "1" } else { "0" },
+                                            if current_shading_flags.contains(&crate::model::ShadingFlags::TwoSided) { "1" } else { "0" },
+                                            if current_shading_flags.contains(&crate::model::ShadingFlags::Unfogged) { "1" } else { "0" },
+                                            if current_shading_flags.contains(&crate::model::ShadingFlags::NoDepthTest) { "1" } else { "0" },
+                                            if current_shading_flags.contains(&crate::model::ShadingFlags::NoDepthSet) { "1" } else { "0" },
+                                        );
+                                        
+                                        let shading_header_id = egui::Id::new(("shading", mat_id, layer_id));
+                                        egui::CollapsingHeader::new(format!("    Shading {}", shading_mask))
+                                            .id_source(shading_header_id)
+                                            .default_open(false)
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.add_space(20.0);
+                                                    
+                                                    // Reset button
+                                                    if ui.small_button("↺").on_hover_text("Reset to original").clicked() {
+                                                        layer.shading_flags_override = None;
+                                                    }
+                                                    
+                                                    if layer.shading_flags_override.is_some() {
+                                                        ui.label(egui::RichText::new("(modified)").small().weak());
+                                                    }
+                                                });
+                                                
+                                                ui.horizontal(|ui| {
+                                                    ui.add_space(20.0);
+                                                    ui.vertical(|ui| {
+                                                        // Get current flags (either override or original)
+                                                        let mut current_flags = layer.shading_flags_override
+                                                            .clone()
+                                                            .unwrap_or_else(|| layer.shading_flags.clone());
+                                                        
+                                                        let mut changed = false;
+                                                
+                                                        // All possible shading flags
+                                                        let all_flags = [
+                                                            crate::model::ShadingFlags::Unshaded,
+                                                            crate::model::ShadingFlags::SphereEnvMap,
+                                                            crate::model::ShadingFlags::TwoSided,
+                                                            crate::model::ShadingFlags::Unfogged,
+                                                            crate::model::ShadingFlags::NoDepthTest,
+                                                            crate::model::ShadingFlags::NoDepthSet,
+                                                        ];
+                                                        
+                                                        for flag in &all_flags {
+                                                            let mut is_set = current_flags.contains(flag);
+                                                            if ui.checkbox(&mut is_set, flag.name()).changed() {
+                                                                if is_set {
+                                                                    if !current_flags.contains(flag) {
+                                                                        current_flags.push(*flag);
+                                                                        changed = true;
+                                                                    }
+                                                                } else {
+                                                                    current_flags.retain(|f| f != flag);
+                                                                    changed = true;
+                                                                }
+                                                            }
+                                                        }
+                                                        
+                                                        if changed {
+                                                            layer.shading_flags_override = Some(current_flags);
+                                                        }
+                                                    });
+                                                });
+                                            }); // end CollapsingHeader for Shading
+                                        
+                                        // Alpha slider with reset button
+                                        ui.horizontal(|ui| {
+                                            ui.label("    Alpha:");
+                                            
+                                            // Get current alpha (either override or original)
+                                            let mut current_alpha = layer.alpha_override.unwrap_or(layer.alpha);
+                                            
+                                            if ui.add(egui::Slider::new(&mut current_alpha, 0.0..=1.0)
+                                                .step_by(0.01)
+                                                .show_value(true))
+                                                .changed() 
+                                            {
+                                                layer.alpha_override = Some(current_alpha);
+                                            }
+                                            
+                                            // Reset button
+                                            if ui.small_button("↺").on_hover_text("Reset to original").clicked() {
+                                                layer.alpha_override = None;
+                                            }
+                                            
+                                            // Show original value if overridden
+                                            if layer.alpha_override.is_some() {
+                                                ui.label(egui::RichText::new(format!("(orig: {:.2})", layer.alpha)).small().weak());
+                                            }
+                                        });
+                                        }); // end add_enabled_ui
                                     }
-                                });
-                                ui.add_space(4.0);
+                                }); // end CollapsingHeader
                             }
                         });
                 } else {

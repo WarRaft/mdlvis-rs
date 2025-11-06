@@ -242,7 +242,25 @@ impl App {
                     width,
                     height,
                 } => {
-                    println!("Applying loaded texture {} to renderer", texture_id);
+                    println!("Applying loaded texture {} to renderer ({}x{})", texture_id, width, height);
+                    
+                    // Debug: check alpha channel for texture #7 (EmberKnight)
+                    if texture_id == 7 {
+                        let mut has_alpha = false;
+                        let mut min_alpha = 255u8;
+                        let mut max_alpha = 0u8;
+                        for chunk in rgba_data.chunks(4) {
+                            let alpha = chunk[3];
+                            if alpha < 255 {
+                                has_alpha = true;
+                            }
+                            min_alpha = min_alpha.min(alpha);
+                            max_alpha = max_alpha.max(alpha);
+                        }
+                        println!("Texture #7 (EmberKnight) alpha stats: min={}, max={}, has_transparency={}", 
+                                 min_alpha, max_alpha, has_alpha);
+                    }
+                    
                     self.renderer
                         .load_texture_from_rgba(&rgba_data, width, height, texture_id);
 
@@ -302,7 +320,7 @@ impl App {
                 use_animation_ui,
             ) = self.ui.show(
                 ctx,
-                &self.model,
+                &mut self.model,
                 camera_yaw,
                 camera_pitch,
                 &mut self.settings,
@@ -391,7 +409,11 @@ impl App {
         // Sync camera state to renderer
         self.renderer.camera = self.camera_controller.state().clone();
 
+        // Get model reference - we need it for rendering
+        let model = self.model.as_ref().ok_or(wgpu::SurfaceError::Lost)?;
+
         self.renderer.render(
+            model,
             show_skeleton,
             show_grid,
             show_bounding_box,

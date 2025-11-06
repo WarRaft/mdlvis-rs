@@ -603,21 +603,8 @@ fn read_materials(file: &mut File, model: &mut Model, size: u32) -> Result<(), B
             let _coord_id = file.read_u32::<LittleEndian>()?;
             let alpha = file.read_f32::<LittleEndian>()?;
             
-            // Map filter mode from MDX specification:
-            // 0=none (opaque), 1=transparent, 2=blend, 3=additive, 4=addAlpha, 5=modulate, 6=modulate2x
-            let filter_mode = match filter_mode_val {
-                0 => crate::model::FilterMode::Opaque, // None = Opaque
-                1 => crate::model::FilterMode::Transparent,
-                2 => crate::model::FilterMode::Blend,
-                3 => crate::model::FilterMode::Additive,
-                4 => crate::model::FilterMode::AddAlpha,
-                5 => crate::model::FilterMode::Modulate,
-                6 => crate::model::FilterMode::Modulate2x,
-                _ => {
-                    eprintln!("Unknown filter mode: {}, defaulting to Opaque", filter_mode_val);
-                    crate::model::FilterMode::Opaque
-                }
-            };
+            // Parse filter mode using FilterMode::from_u32
+            let filter_mode = crate::model::FilterMode::from_u32(filter_mode_val);
             
             // Parse shading flags once during loading
             let shading_flags = crate::model::ShadingFlags::from_bits(shading_flags_bits);
@@ -627,6 +614,11 @@ fn read_materials(file: &mut File, model: &mut Model, size: u32) -> Result<(), B
                 filter_mode,
                 shading_flags,
                 alpha,
+                // Initialize runtime fields
+                enabled: true,
+                alpha_override: None,
+                filter_mode_override: None,
+                shading_flags_override: None,
             };
             material.layers.push(layer);
             

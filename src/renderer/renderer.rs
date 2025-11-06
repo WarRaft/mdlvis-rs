@@ -1,4 +1,4 @@
-use crate::material_system::MaterialUniform;
+use crate::material::MaterialUniform;
 use crate::model::{FilterMode, Model};
 use crate::renderer::camera::CameraState;
 use crate::renderer::geoset_render_info::GeosetRenderInfo;
@@ -56,6 +56,14 @@ pub struct Renderer {
     original_vertices: Vec<Vertex>,
     // Store model for accessing vertex groups during animation
     model: Option<Model>,
+}
+
+// Structure for depth-sorted triangle rendering (like Delphi TSortPrimitive)
+#[derive(Clone)]
+struct SortedTriangle {
+    geo_num: u32,      // geoset_id + (layer_id << 16) - packed like Delphi
+    index_start: u32,  // Starting index in the index buffer for this triangle
+    depth: f32,        // Z-coordinate in view space (for sorting)
 }
 
 impl Renderer {
@@ -169,7 +177,7 @@ impl Renderer {
         });
 
         // Create material uniform buffer
-        let material_uniform = MaterialUniform::new([1.0, 0.0, 0.0], 0, false, FilterMode::Opaque, 1.0, 0);
+        let material_uniform = MaterialUniform::new([1.0, 0.0, 0.0], 0, false, FilterMode::None, 1.0, 0);
 
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Material Buffer"),
@@ -876,8 +884,73 @@ impl Renderer {
         self.egui_ctx.clone()
     }
 
+    /// Collect and sort triangles from transparent/blend layers by depth
+    /// Returns sorted triangles ready for back-to-front rendering (like Delphi PrSorted)
+    fn collect_sorted_triangles(&self, show_geosets: &Vec<bool>) -> Vec<SortedTriangle> {
+        let mut sorted_triangles = Vec::new();
+
+        // Collect all triangles from transparent/blend layers
+        for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
+            // Skip if geoset is hidden via UI
+            if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
+                continue;
+            }
+
+            if let Some(mat_id) = geoset.material_id {
+                if mat_id < self.materials.len() {
+                    let material = &self.materials[mat_id];
+                    
+                    for (layer_idx, layer) in material.layers.iter().enumerate() {
+                        // Only collect transparent and blend layers
+                        if layer.filter_mode == FilterMode::Transparent
+                            || layer.filter_mode == FilterMode::Blend
+                        {
+                            // Pack geoset_id and layer_id like Delphi: GeoNum = geoset + (layer << 16)
+                            let geo_num = (geoset_idx as u32) | ((layer_idx as u32) << 16);
+
+                            // Process each face (triangle) in this geoset
+                            for (face_idx, face) in geoset.faces.iter().enumerate() {
+                                // Calculate average Z-coordinate of the triangle in view space
+                                let mut avg_z = 0.0;
+                                let mut valid_vertices = 0;
+                                
+                                for &vertex_idx in face.iter().take(3) {
+                                    if (vertex_idx as usize) < geoset.vertices.len() {
+                                        let pos = geoset.vertices[vertex_idx as usize];
+                                        // Transform vertex to view space using view_proj_matrix
+                                        let pos_vec4 = nalgebra_glm::vec4(pos[0], pos[1], pos[2], 1.0);
+                                        let transformed = self.view_proj_matrix * pos_vec4;
+                                        // Use Z-coordinate in clip space
+                                        avg_z += transformed.z;
+                                        valid_vertices += 1;
+                                    }
+                                }
+
+                                if valid_vertices == 3 {
+                                    avg_z /= 3.0;
+
+                                    sorted_triangles.push(SortedTriangle {
+                                        geo_num,
+                                        index_start: geoset.index_start + (face_idx * 3) as u32,
+                                        depth: avg_z,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort triangles back-to-front (higher Z = further away, render first)
+        sorted_triangles.sort_by(|a, b| b.depth.partial_cmp(&a.depth).unwrap_or(std::cmp::Ordering::Equal));
+
+        sorted_triangles
+    }
+
     pub fn render(
         &mut self,
+        model: &crate::model::Model,
         show_skeleton: bool,
         show_grid: bool,
         show_bounding_box: bool,
@@ -925,30 +998,34 @@ impl Renderer {
                                        layer_index: usize|
          -> MaterialUniform {
             let (filter_mode, replaceable_id, layer_alpha, shading_flags) = if let Some(mat_id) = geoset.material_id {
-                if mat_id < self.materials.len() {
-                    let material = &self.materials[mat_id];
+                if mat_id < model.materials.len() {
+                    let material = &model.materials[mat_id];
                     if layer_index < material.layers.len() {
                         let layer = &material.layers[layer_index];
                         let rid = if let Some(tex_id) = layer.texture_id {
-                            if tex_id < self.textures.len() {
-                                self.textures[tex_id].replaceable_id
+                            if tex_id < model.textures.len() {
+                                model.textures[tex_id].replaceable_id
                             } else {
                                 0
                             }
                         } else {
                             0
                         };
-                        // Convert shading flags array back to bitfield for shader
-                        let shading_bits = crate::model::ShadingFlags::to_bits(&layer.shading_flags);
-                        (layer.filter_mode.clone(), rid, layer.alpha, shading_bits)
+                        // Use get_filter_mode() to respect overrides!
+                        let filter_mode = layer.get_filter_mode();
+                        // Use layer methods to get effective values (with overrides)
+                        let flags = layer.get_shading_flags();
+                        let shading_bits = crate::model::ShadingFlags::to_bits(&flags);
+                        let alpha = layer.get_alpha();
+                        (filter_mode, rid, alpha, shading_bits)
                     } else {
-                        (FilterMode::Opaque, 0, 1.0, 0)
+                        (FilterMode::None, 0, 1.0, 0)
                     }
                 } else {
-                    (FilterMode::Opaque, 0, 1.0, 0)
+                    (FilterMode::None, 0, 1.0, 0)
                 }
             } else {
-                (FilterMode::Opaque, 0, 1.0, 0)
+                (FilterMode::None, 0, 1.0, 0)
             };
 
             MaterialUniform::new(self.team_color, replaceable_id, wireframe_mode, filter_mode, layer_alpha, shading_flags)
@@ -1107,12 +1184,21 @@ impl Renderer {
                     }
 
                     if let Some(mat_id) = geoset.material_id {
-                        if mat_id < self.materials.len() {
-                            let material = &self.materials[mat_id];
+                        if mat_id < model.materials.len() {
+                            let material = &model.materials[mat_id];
                             // Render ALL layers, not just first
                             for (layer_idx, layer) in material.layers.iter().enumerate() {
-                                // Render only opaque layers in first pass
-                                if layer.filter_mode == FilterMode::Opaque {
+                                // Skip if layer is disabled in UI
+                                if !layer.is_enabled() {
+                                    continue;
+                                }
+                                
+                                // Get current filter mode (may be overridden by user)
+                                let current_filter_mode = layer.get_filter_mode();
+                                
+                                // Render None and Transparent layers in first pass
+                                // Transparent uses alpha testing (discard in shader), not blending
+                                if current_filter_mode == FilterMode::None || current_filter_mode == FilterMode::Transparent {
                                     render_geoset_layer(&mut render_pass, geoset, layer_idx);
                                 }
                             }
@@ -1135,14 +1221,21 @@ impl Renderer {
                     }
 
                     if let Some(mat_id) = geoset.material_id {
-                        if mat_id < self.materials.len() {
-                            let material = &self.materials[mat_id];
+                        if mat_id < model.materials.len() {
+                            let material = &model.materials[mat_id];
                             // Render ALL layers, not just first
                             for (layer_idx, layer) in material.layers.iter().enumerate() {
-                                // Render transparent and blend layers in second pass
-                                if layer.filter_mode == FilterMode::Transparent
-                                    || layer.filter_mode == FilterMode::Blend
-                                {
+                                // Skip if layer is disabled in UI
+                                if !layer.is_enabled() {
+                                    continue;
+                                }
+                                
+                                // Get current filter mode (may be overridden by user)
+                                let current_filter_mode = layer.get_filter_mode();
+                                
+                                // Render ONLY Blend layers in second pass
+                                // Transparent is rendered in first pass with alpha testing
+                                if current_filter_mode == FilterMode::Blend {
                                     render_geoset_layer(&mut render_pass, geoset, layer_idx);
                                 }
                             }
@@ -1165,13 +1258,21 @@ impl Renderer {
                     }
 
                     if let Some(mat_id) = geoset.material_id {
-                        if mat_id < self.materials.len() {
-                            let material = &self.materials[mat_id];
+                        if mat_id < model.materials.len() {
+                            let material = &model.materials[mat_id];
                             // Render ALL layers, not just first
                             for (layer_idx, layer) in material.layers.iter().enumerate() {
+                                // Skip if layer is disabled in UI
+                                if !layer.is_enabled() {
+                                    continue;
+                                }
+                                
+                                // Get current filter mode (may be overridden by user)
+                                let current_filter_mode = layer.get_filter_mode();
+                                
                                 // Render additive layers in third pass
-                                if layer.filter_mode == FilterMode::Additive
-                                    || layer.filter_mode == FilterMode::AddAlpha
+                                if current_filter_mode == FilterMode::Additive
+                                    || current_filter_mode == FilterMode::AddAlpha
                                 {
                                     render_geoset_layer(&mut render_pass, geoset, layer_idx);
                                 }
@@ -1292,10 +1393,22 @@ impl Renderer {
 
             let index_count = (all_indices.len() as u32) - index_start;
 
+            // Store vertex positions for depth sorting
+            let vertices: Vec<[f32; 3]> = geoset.vertices.iter()
+                .map(|v| v.position)
+                .collect();
+
+            // Store faces for depth sorting
+            let faces: Vec<Vec<u32>> = geoset.faces.iter()
+                .map(|f| f.vertices.to_vec())
+                .collect();
+
             geosets_info.push(GeosetRenderInfo {
                 index_start,
                 index_count,
                 material_id: geoset.material_id,
+                vertices,
+                faces,
             });
 
             println!(
@@ -1350,7 +1463,7 @@ impl Renderer {
         // Store original vertices for animation
         self.original_vertices = all_vertices.clone();
 
-        self.vertex_buffer = self
+        let vertex_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
@@ -1358,7 +1471,7 @@ impl Renderer {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
-        self.index_buffer = self
+        let index_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Index Buffer"),
@@ -1366,6 +1479,8 @@ impl Renderer {
                 usage: wgpu::BufferUsages::INDEX,
             });
 
+        self.vertex_buffer = vertex_buffer;
+        self.index_buffer = index_buffer;
         self.num_indices = all_indices.len() as u32;
         println!("Updated num_indices to: {}", self.num_indices);
 

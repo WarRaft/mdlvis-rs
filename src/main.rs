@@ -9,7 +9,7 @@ use winit::{
 mod app;
 mod animation;
 mod error;
-mod material_system;
+mod material;
 mod model;
 mod parser;
 mod settings;

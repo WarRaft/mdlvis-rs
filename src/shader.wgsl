@@ -65,7 +65,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // In wireframe mode, use a solid color instead of texture
     if (wireframe_mode > 0.5) {
         var wireframe_color = vec3<f32>(0.0, 1.0, 0.0); // Default green
-        if (filter_mode >= 3.0) { // Additive or AddAlpha
+        if (filter_mode >= 4.0) { // Additive or AddAlpha (now 4.0+)
             wireframe_color = vec3<f32>(1.0, 0.5, 0.0); // Orange for glow effects
         }
         return vec4<f32>(wireframe_color, 1.0);
@@ -74,12 +74,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample texture (for RID=1/2 textures are already generated with team color)
     var tex_color = textureSample(t_diffuse, s_diffuse, in.uv);
     
-    // Apply layer alpha to texture alpha channel
-    tex_color = vec4<f32>(tex_color.rgb, tex_color.a * layer_alpha);
+    // Filter mode handling:
+    // 0 = None - no transparency
+    // 1 = Transparent - alpha testing (discard transparent pixels)
+    // 2 = Blend - alpha blending
+    // 3+ = Additive/etc
+    
+    // Alpha test for Transparent mode - War3 uses cutout, not blending!
+    if (filter_mode > 0.5 && filter_mode < 1.5) { // Transparent mode
+        if (tex_color.a < 0.01) { // Discard nearly transparent pixels
+            discard;
+        }
+        // Don't modify alpha - keep original for proper rendering
+    }
+
+    
+    // Apply layer_alpha to texture alpha (modulate like glColor4f)
+    // This controls the transparency of this entire layer
+    tex_color.a = tex_color.a * layer_alpha;
     
     // Apply lighting only to non-glow materials AND if not unshaded
     var final_color = tex_color;
-    if (filter_mode < 3.0 && !is_unshaded) { // Not additive/glow AND not unshaded
+    if (filter_mode < 4.0 && !is_unshaded) { // Not additive/glow (now < 4.0) AND not unshaded
         let light_dir = normalize(vec3<f32>(1.0, 1.0, 1.0));
         var normal = normalize(in.normal);
         normal.y = -normal.y; // Flip normal Y too
