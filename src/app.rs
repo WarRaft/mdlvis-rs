@@ -409,22 +409,30 @@ impl App {
         // Sync camera state to renderer
         self.renderer.camera = self.camera_controller.state().clone();
 
-        // Get model reference - we need it for rendering
-        let model = self.model.as_ref().ok_or(wgpu::SurfaceError::Lost)?;
-
-        self.renderer.render(
-            model,
-            show_skeleton,
-            show_grid,
-            show_bounding_box,
-            wireframe_mode,
-            far_plane,
-            current_frame,
-            &show_geosets,
-            paint_jobs,
-            full_output.textures_delta,
-            screen_descriptor,
-        )
+        // Render with or without model
+        if let Some(model) = self.model.as_ref() {
+            self.renderer.render(
+                model,
+                show_skeleton,
+                show_grid,
+                show_bounding_box,
+                wireframe_mode,
+                far_plane,
+                current_frame,
+                &show_geosets,
+                paint_jobs,
+                full_output.textures_delta,
+                screen_descriptor,
+            )
+        } else {
+            // No model - just render empty scene with grid
+            self.renderer.render_empty(
+                show_grid,
+                paint_jobs,
+                full_output.textures_delta,
+                screen_descriptor,
+            )
+        }
     }
 
     pub fn take_pending_model_path(&mut self) -> Option<String> {

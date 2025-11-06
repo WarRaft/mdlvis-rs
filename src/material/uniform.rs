@@ -14,7 +14,7 @@ pub struct MaterialUniform {
 impl MaterialUniform {
     /// Create material uniform for rendering
     pub fn new(team_color: [f32; 3], replaceable_id: u32, wireframe_mode: bool, filter_mode: FilterMode, layer_alpha: f32, shading_flags: u32) -> Self {
-        Self {
+        let uniform = Self {
             team_color: [
                 team_color[0],
                 team_color[1],
@@ -28,6 +28,8 @@ impl MaterialUniform {
                 shading_flags as f32,
             ],
             extra_padding: [0.0, 0.0, 0.0, 0.0],
-        }
+        };
+        
+        uniform
     }
 }

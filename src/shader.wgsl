@@ -89,12 +89,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     
-    // Apply layer_alpha to texture alpha (modulate like glColor4f)
-    // This controls the transparency of this entire layer
-    tex_color.a = tex_color.a * layer_alpha;
+    // Apply layer_alpha to texture
+    var layer_tex_color = tex_color;
+    layer_tex_color.a = tex_color.a * layer_alpha;
     
     // Apply lighting only to non-glow materials AND if not unshaded
-    var final_color = tex_color;
+    var final_color = layer_tex_color;
     if (filter_mode < 4.0 && !is_unshaded) { // Not additive/glow (now < 4.0) AND not unshaded
         let light_dir = normalize(vec3<f32>(1.0, 1.0, 1.0));
         var normal = normalize(in.normal);
@@ -102,7 +102,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let diffuse = max(dot(normal, light_dir), 0.0);
         let ambient = 0.3;
         let brightness = ambient + (1.0 - ambient) * diffuse;
-        final_color = vec4<f32>(tex_color.rgb * brightness, tex_color.a);
+        final_color = vec4<f32>(layer_tex_color.rgb * brightness, layer_tex_color.a);
     }
     
     return final_color;

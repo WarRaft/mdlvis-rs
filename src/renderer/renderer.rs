@@ -948,6 +948,145 @@ impl Renderer {
         sorted_triangles
     }
 
+    /// Render empty scene (no model loaded) - just grid and UI
+    pub fn render_empty(
+        &mut self,
+        show_grid: bool,
+        _paint_jobs: Vec<egui::ClippedPrimitive>,
+        _textures_delta: egui::TexturesDelta,
+        _screen_descriptor: ScreenDescriptor,
+    ) -> Result<(), wgpu::SurfaceError> {
+        // Skip rendering if window size is invalid
+        if self.config.width == 0 || self.config.height == 0 {
+            return Ok(());
+        }
+
+        // Calculate viewport dimensions
+        let viewport_width = self.config.width as f32;
+        let viewport_height = self.config.height as f32;
+        let aspect = viewport_width / viewport_height;
+        let far_plane = 10000.0;
+        let proj = nalgebra_glm::perspective(aspect, 45.0_f32.to_radians(), 0.1, far_plane);
+
+        let eye = nalgebra_glm::vec3(
+            self.camera.target[0] + self.camera.distance * self.camera.yaw.cos() * self.camera.pitch.cos(),
+            self.camera.target[1] + self.camera.distance * self.camera.yaw.sin() * self.camera.pitch.cos(),
+            self.camera.target[2] + self.camera.distance * self.camera.pitch.sin(),
+        );
+        let center = nalgebra_glm::vec3(self.camera.target[0], self.camera.target[1], self.camera.target[2]);
+        let up = nalgebra_glm::vec3(0.0, 0.0, 1.0);
+        let view = nalgebra_glm::look_at(&eye, &center, &up);
+        let view_proj = proj * view;
+        
+        self.view_proj_matrix = view_proj;
+        self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(view_proj.as_slice()));
+
+        let output = self.surface.get_current_texture()?;
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
+            size: wgpu::Extent3d {
+                width: self.config.width,
+                height: self.config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: self.skybox_color[0] as f64,
+                            g: self.skybox_color[1] as f64,
+                            b: self.skybox_color[2] as f64,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            // Draw grid if enabled
+            if show_grid && self.num_lines > 0 {
+                render_pass.set_pipeline(&self.line_pipeline);
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
+                render_pass.draw(0..self.num_lines, 0..1);
+            }
+        }
+
+        // Render egui
+        for (id, image_delta) in &_textures_delta.set {
+            self.egui_renderer.update_texture(&self.device, &self.queue, *id, image_delta);
+        }
+
+        self.egui_renderer.update_buffers(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &_paint_jobs,
+            &_screen_descriptor,
+        );
+
+        {
+            let mut egui_rpass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("egui render pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                })
+                .forget_lifetime();
+
+            self.egui_renderer.render(&mut egui_rpass, &_paint_jobs, &_screen_descriptor);
+        }
+
+        for id in &_textures_delta.free {
+            self.egui_renderer.free_texture(id);
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
+    }
+
     pub fn render(
         &mut self,
         model: &crate::model::Model,
@@ -962,6 +1101,11 @@ impl Renderer {
         _textures_delta: egui::TexturesDelta,
         _screen_descriptor: ScreenDescriptor,
     ) -> Result<(), wgpu::SurfaceError> {
+        // Skip rendering if window size is invalid (minimized, not ready, etc.)
+        if self.config.width == 0 || self.config.height == 0 {
+            return Ok(());
+        }
+        
         // Calculate viewport dimensions (no left panel anymore)
         let viewport_width = self.config.width as f32;
         let viewport_height = self.config.height as f32;
@@ -1017,6 +1161,7 @@ impl Renderer {
                         let flags = layer.get_shading_flags();
                         let shading_bits = crate::model::ShadingFlags::to_bits(&flags);
                         let alpha = layer.get_alpha();
+                        
                         (filter_mode, rid, alpha, shading_bits)
                     } else {
                         (FilterMode::None, 0, 1.0, 0)
@@ -1128,8 +1273,8 @@ impl Renderer {
                     // Determine texture bind group for this specific layer
                     let texture_bind_group =
                         if let Some(mat_id) = geoset.material_id {
-                            if mat_id < self.materials.len() {
-                                let material = &self.materials[mat_id];
+                            if mat_id < model.materials.len() {
+                                let material = &model.materials[mat_id];
                                 if layer_index < material.layers.len() {
                                     let layer = &material.layers[layer_index];
                                     if let Some(tex_id) = layer.texture_id {
