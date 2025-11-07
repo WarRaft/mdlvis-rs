@@ -1,8 +1,10 @@
+use std::fs::File;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use winit::window::Window;
 
 use crate::model::Model;
+use crate::parser::load::load;
 use crate::renderer::camera::CameraController;
 use crate::renderer::renderer::Renderer;
 use crate::texture::{TextureManager, TexturePanel};
@@ -215,12 +217,8 @@ impl App {
                 if matches!(phase, TouchPhase::Moved) {
                     let control = self.camera_controller.is_control_pressed();
                     let shift = self.camera_controller.is_shift_pressed();
-                    self.camera_controller.on_pan_gesture(
-                        delta.x as f32,
-                        -delta.y as f32,
-                        control,
-                        shift,
-                    );
+                    self.camera_controller
+                        .on_pan_gesture(delta.x, -delta.y, control, shift);
                 }
             }
             _ => {}
@@ -242,8 +240,11 @@ impl App {
                     width,
                     height,
                 } => {
-                    println!("Applying loaded texture {} to renderer ({}x{})", texture_id, width, height);
-                    
+                    println!(
+                        "Applying loaded texture {} to renderer ({}x{})",
+                        texture_id, width, height
+                    );
+
                     // Debug: check alpha channel for texture #7 (EmberKnight)
                     if texture_id == 7 {
                         let mut has_alpha = false;
@@ -257,10 +258,12 @@ impl App {
                             min_alpha = min_alpha.min(alpha);
                             max_alpha = max_alpha.max(alpha);
                         }
-                        println!("Texture #7 (EmberKnight) alpha stats: min={}, max={}, has_transparency={}", 
-                                 min_alpha, max_alpha, has_alpha);
+                        println!(
+                            "Texture #7 (EmberKnight) alpha stats: min={}, max={}, has_transparency={}",
+                            min_alpha, max_alpha, has_alpha
+                        );
                     }
-                    
+
                     self.renderer
                         .load_texture_from_rgba(&rgba_data, width, height, texture_id);
 
@@ -282,7 +285,10 @@ impl App {
                             texture_info.status = crate::texture::TextureStatus::ErrorLocal(error);
                             texture_info.progress = 0.0;
                         } else {
-                            println!("Ignoring error for texture {} - already loaded successfully", texture_id);
+                            println!(
+                                "Ignoring error for texture {} - already loaded successfully",
+                                texture_id
+                            );
                         }
                     }
                 }
@@ -327,7 +333,7 @@ impl App {
                 &mut self.texture_panel,
                 &mut self.renderer,
             );
-            
+
             reset_camera = reset_camera_ui;
             current_frame = current_frame_ui;
             show_geosets = show_geosets_ui;
@@ -442,7 +448,9 @@ impl App {
     pub async fn load_model(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
         println!("Loading model: {}", path);
 
-        let model = crate::parser::load_mdl(path)?;
+        let mut file = File::open(path)?;
+
+        let model = load(&mut file)?;
 
         // Initialize texture manager with model path and textures
         self.model_path = Some(path.to_string());
@@ -533,7 +541,10 @@ impl App {
             // Skip textures that were found locally - they're already being loaded
             if let Some(texture_info) = self.texture_manager.get_texture(texture_id) {
                 if texture_info.local_path.is_some() {
-                    println!("Skipping background load for texture {} - found locally", texture_id);
+                    println!(
+                        "Skipping background load for texture {} - found locally",
+                        texture_id
+                    );
                     continue;
                 }
             }
@@ -548,16 +559,8 @@ impl App {
 
             // Spawn background task to download from internet
             tokio::spawn(async move {
-                println!(
-                    "Background downloading texture {}: {}",
-                    texture_id, texture_path
-                );
                 match crate::texture::load_texture(&texture_path).await {
                     Ok((rgba_data, width, height)) => {
-                        println!(
-                            "Successfully loaded texture {} ({}x{}) in background",
-                            texture_id, width, height
-                        );
                         let _ = sender.send(TextureLoadResult::Success {
                             texture_id,
                             rgba_data,
@@ -566,10 +569,6 @@ impl App {
                         });
                     }
                     Err(e) => {
-                        eprintln!(
-                            "Failed to load texture {} ({}): {}",
-                            texture_id, texture_path, e
-                        );
                         let _ = sender.send(TextureLoadResult::Error {
                             texture_id,
                             error: e.to_string(),
@@ -580,17 +579,17 @@ impl App {
         }
 
         self.model = Some(model.clone());
-        
+
         // Initialize animation system with bones
         println!("Initializing animation system...");
         self.animation_system.init_from_model(&model);
         println!("Animation system initialized");
-        
+
         // Reset animation state for new model
         println!("Resetting UI animation state...");
         self.ui.reset_animation(&self.model);
         println!("UI animation state reset");
-        
+
         println!("Model loaded successfully");
 
         Ok(())

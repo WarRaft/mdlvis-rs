@@ -5,7 +5,6 @@ use std::io;
 pub enum MdlError {
     Io(io::Error),
     Parse(String),
-    TextureLoad(String),
     TextureDecode(String),
     Network(String),
     NotFound(String),
@@ -17,7 +16,6 @@ impl fmt::Display for MdlError {
         match self {
             MdlError::Io(err) => write!(f, "IO error: {}", err),
             MdlError::Parse(msg) => write!(f, "Parse error: {}", msg),
-            MdlError::TextureLoad(msg) => write!(f, "Texture load error: {}", msg),
             MdlError::TextureDecode(msg) => write!(f, "Texture decode error: {}", msg),
             MdlError::Network(msg) => write!(f, "Network error: {}", msg),
             MdlError::NotFound(msg) => write!(f, "Not found: {}", msg),

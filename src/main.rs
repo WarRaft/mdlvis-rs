@@ -11,11 +11,11 @@ mod animation;
 mod error;
 mod material;
 mod model;
-mod parser;
 mod settings;
 mod texture;
 mod ui;
 mod renderer;
+mod parser;
 
 struct AppHandler {
     app: Option<app::App>,
