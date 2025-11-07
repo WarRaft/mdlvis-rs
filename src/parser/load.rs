@@ -3,6 +3,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use crate::error::MdlError;
+use crate::parser::geoset::geoset_parse;
 
 pub fn load(file: &mut File) -> Result<Model, MdlError> {
     let mut model = Model::default();
@@ -38,7 +39,7 @@ pub fn load(file: &mut File) -> Result<Model, MdlError> {
             b"GEOS" => {
                 // Geosets - this chunk contains multiple geosets
                 println!("Reading GEOS chunk, size: {}", size);
-                crate::parser::parser::read_geosets(file, &mut model, size)?;
+                geoset_parse(file, &mut model, size)?;
                 println!("Loaded {} geosets", model.geosets.len());
             }
             b"SEQS" => {

@@ -22,10 +22,10 @@ pub async fn download_texture(path: &str) -> Result<Vec<u8>, MdlError> {
     // Use async HTTP client
     let response = reqwest::get(&url)
         .await
-        .map_err(|e| MdlError::Network(format!("Failed to download from {}: {}", url, e)))?;
+        .map_err(|e| MdlError::new("network-error").with_arg("msg", format!("Failed to download from {}: {}", url, e)))?;
 
     if !response.status().is_success() {
-        return Err(MdlError::Network(format!(
+        return Err(MdlError::new("network-error").with_arg("msg", format!(
             "HTTP {} from {}",
             response.status(),
             url
@@ -35,7 +35,7 @@ pub async fn download_texture(path: &str) -> Result<Vec<u8>, MdlError> {
     let bytes = response
         .bytes()
         .await
-        .map_err(|e| MdlError::Network(format!("Failed to read response from {}: {}", url, e)))?;
+        .map_err(|e| MdlError::new("network-error").with_arg("msg", format!("Failed to read response from {}: {}", url, e)))?;
     Ok(bytes.to_vec())
 }
 

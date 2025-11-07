@@ -1,64 +1,110 @@
-use std::fmt;
-use std::io;
+use std::{collections::BTreeMap, fmt, io, sync::Arc};
 
-#[derive(Debug)]
-pub enum MdlError {
-    Io(io::Error),
-    Parse(String),
-    TextureDecode(String),
-    Network(String),
-    NotFound(String),
-    InvalidFormat(String),
+#[derive(Debug, Clone)]
+pub struct MdlError {
+    pub key: &'static str,
+    pub args: BTreeMap<&'static str, String>,
+    pub causes: Vec<MdlCause>,
+}
+
+#[derive(Debug, Clone)]
+pub enum MdlCause {
+    Mdl(Box<MdlError>),
+    Std(Arc<dyn std::error::Error + Send + Sync>),
+}
+
+impl MdlError {
+    pub fn new(key: &'static str) -> Self {
+        Self {
+            key,
+            args: BTreeMap::new(),
+            causes: Vec::new(),
+        }
+    }
+
+    pub fn with_arg(mut self, k: &'static str, v: impl ToString) -> Self {
+        self.args.insert(k, v.to_string());
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_args(mut self, args: impl IntoIterator<Item = (&'static str, String)>) -> Self {
+        for (k, v) in args {
+            self.args.insert(k, v);
+        }
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn push_mdl(mut self, cause: MdlError) -> Self {
+        self.causes.push(MdlCause::Mdl(Box::new(cause)));
+        self
+    }
+
+    pub fn push_std(mut self, cause: impl std::error::Error + Send + Sync + 'static) -> Self {
+        self.causes.push(MdlCause::Std(Arc::new(cause)));
+        self
+    }
 }
 
 impl fmt::Display for MdlError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            MdlError::Io(err) => write!(f, "IO error: {}", err),
-            MdlError::Parse(msg) => write!(f, "Parse error: {}", msg),
-            MdlError::TextureDecode(msg) => write!(f, "Texture decode error: {}", msg),
-            MdlError::Network(msg) => write!(f, "Network error: {}", msg),
-            MdlError::NotFound(msg) => write!(f, "Not found: {}", msg),
-            MdlError::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
+        write!(f, "{}(", self.key)?;
+        let mut first = true;
+        for (k, v) in &self.args {
+            if !first {
+                write!(f, ", ")?;
+            }
+            first = false;
+            write!(f, "{k}={v}")?;
         }
+        write!(f, ")")
     }
 }
 
-impl std::error::Error for MdlError {}
+impl std::error::Error for MdlError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.causes.iter().find_map(|c| match c {
+            MdlCause::Mdl(e) => Some(e.as_ref() as &dyn std::error::Error),
+            MdlCause::Std(e) => Some(e.as_ref()),
+        })
+    }
+}
 
 impl From<io::Error> for MdlError {
     fn from(err: io::Error) -> Self {
-        MdlError::Io(err)
+        MdlError::new("io-error").push_std(err)
     }
 }
 
 impl From<reqwest::Error> for MdlError {
     fn from(err: reqwest::Error) -> Self {
-        MdlError::Network(err.to_string())
+        MdlError::new("network-error")
+            .with_arg("msg", err.to_string())
+            .push_std(err)
     }
 }
 
 impl From<blp::error::error::BlpError> for MdlError {
     fn from(err: blp::error::error::BlpError) -> Self {
-        MdlError::TextureDecode(format!("BLP error: {:?}", err))
+        MdlError::new("texture-decode-error").with_arg("msg", format!("BLP error: {:?}", err))
     }
 }
 
-// Для совместимости с Box<dyn Error>
 impl From<Box<dyn std::error::Error + Send + Sync>> for MdlError {
     fn from(err: Box<dyn std::error::Error + Send + Sync>) -> Self {
-        MdlError::Parse(err.to_string())
+        MdlError::new("parse-error").with_arg("msg", err.to_string())
     }
 }
 
 impl From<String> for MdlError {
     fn from(s: String) -> Self {
-        MdlError::Parse(s)
+        MdlError::new("string-error").with_arg("msg", s)
     }
 }
 
 impl From<&str> for MdlError {
     fn from(s: &str) -> Self {
-        MdlError::Parse(s.to_string())
+        MdlError::new("str-error").with_arg("msg", s)
     }
 }
