@@ -231,7 +231,6 @@ impl App {
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        // Process any textures that finished loading
         while let Ok(result) = self.texture_receiver.try_recv() {
             match result {
                 TextureLoadResult::Success {
@@ -240,30 +239,6 @@ impl App {
                     width,
                     height,
                 } => {
-                    println!(
-                        "Applying loaded texture {} to renderer ({}x{})",
-                        texture_id, width, height
-                    );
-
-                    // Debug: check alpha channel for texture #7 (EmberKnight)
-                    if texture_id == 7 {
-                        let mut has_alpha = false;
-                        let mut min_alpha = 255u8;
-                        let mut max_alpha = 0u8;
-                        for chunk in rgba_data.chunks(4) {
-                            let alpha = chunk[3];
-                            if alpha < 255 {
-                                has_alpha = true;
-                            }
-                            min_alpha = min_alpha.min(alpha);
-                            max_alpha = max_alpha.max(alpha);
-                        }
-                        println!(
-                            "Texture #7 (EmberKnight) alpha stats: min={}, max={}, has_transparency={}",
-                            min_alpha, max_alpha, has_alpha
-                        );
-                    }
-
                     self.renderer
                         .load_texture_from_rgba(&rgba_data, width, height, texture_id);
 
@@ -640,10 +615,6 @@ impl App {
 
                 match result {
                     Ok((rgba_data, width, height)) => {
-                        println!(
-                            "Successfully loaded texture {} ({}x{})",
-                            texture_id, width, height
-                        );
                         let _ = sender.send(TextureLoadResult::Success {
                             texture_id,
                             rgba_data,
@@ -652,10 +623,6 @@ impl App {
                         });
                     }
                     Err(e) => {
-                        eprintln!(
-                            "Failed to load texture {} ({}): {}",
-                            texture_id, filename, e
-                        );
                         let _ = sender.send(TextureLoadResult::Error {
                             texture_id,
                             error: e.to_string(),

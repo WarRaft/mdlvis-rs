@@ -4,66 +4,57 @@ use crate::renderer::camera::CameraState;
 use crate::renderer::geoset_render_info::GeosetRenderInfo;
 use crate::renderer::line_vertex::LineVertex;
 use crate::renderer::vertex::Vertex;
-use egui_wgpu::ScreenDescriptor;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 pub struct Renderer {
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-    render_pipeline: wgpu::RenderPipeline,
-    wireframe_pipeline: wgpu::RenderPipeline,
-    transparent_pipeline: wgpu::RenderPipeline,
-    wireframe_transparent_pipeline: wgpu::RenderPipeline,
-    additive_pipeline: wgpu::RenderPipeline,
-    wireframe_additive_pipeline: wgpu::RenderPipeline,
-    line_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    num_indices: u32,
-    geosets: Vec<GeosetRenderInfo>,
+    pub(crate) surface: wgpu::Surface<'static>,
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: wgpu::Queue,
+    pub(crate) config: wgpu::SurfaceConfiguration,
+    pub(crate) render_pipeline: wgpu::RenderPipeline,
+    pub(crate) wireframe_pipeline: wgpu::RenderPipeline,
+    pub(crate) transparent_pipeline: wgpu::RenderPipeline,
+    pub(crate) wireframe_transparent_pipeline: wgpu::RenderPipeline,
+    pub(crate) additive_pipeline: wgpu::RenderPipeline,
+    pub(crate) wireframe_additive_pipeline: wgpu::RenderPipeline,
+    pub(crate) line_pipeline: wgpu::RenderPipeline,
+    pub(crate) vertex_buffer: wgpu::Buffer,
+    pub(crate) index_buffer: wgpu::Buffer,
+    pub(crate) num_indices: u32,
+    pub(crate) geosets: Vec<GeosetRenderInfo>,
     materials: Vec<crate::model::Material>,
-    textures: Vec<crate::model::Texture>,
-    line_vertex_buffer: wgpu::Buffer,
-    num_lines: u32,
-    skeleton_vertex_buffer: wgpu::Buffer,
-    num_skeleton_lines: u32,
-    bounding_box_vertex_buffer: wgpu::Buffer,
-    num_bounding_box_lines: u32,
-    camera_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
-    texture_bind_groups: Vec<wgpu::BindGroup>, // One bind group per texture
-    texture_views: Vec<Option<wgpu::TextureView>>, // Store texture views for egui
+    pub(crate) textures: Vec<crate::model::Texture>,
+    pub(crate) line_vertex_buffer: wgpu::Buffer,
+    pub(crate) num_lines: u32,
+    pub(crate) skeleton_vertex_buffer: wgpu::Buffer,
+    pub(crate) num_skeleton_lines: u32,
+    pub(crate) bounding_box_vertex_buffer: wgpu::Buffer,
+    pub(crate) num_bounding_box_lines: u32,
+    pub(crate) camera_buffer: wgpu::Buffer,
+    pub(crate) camera_bind_group: wgpu::BindGroup,
+    pub(crate) texture_bind_groups: Vec<wgpu::BindGroup>, // One bind group per texture
+    texture_views: Vec<Option<wgpu::TextureView>>,        // Store texture views for egui
     texture_bind_group_layout: wgpu::BindGroupLayout,
     // Material uniform - single bind group for all materials
-    material_buffer: wgpu::Buffer,
-    material_bind_group: wgpu::BindGroup,
+    pub(crate) material_buffer: wgpu::Buffer,
+    pub(crate) material_bind_group: wgpu::BindGroup,
     // Store white texture components to create bind groups for missing textures
     white_texture_view: wgpu::TextureView,
     white_texture_sampler: wgpu::Sampler,
-    team_color: [f32; 3],
+    pub team_color: [f32; 3],
     grid_major_color: [f32; 3],
     grid_minor_color: [f32; 3],
-    skybox_color: [f32; 3],
-    pub(crate) camera: CameraState,
+    pub(crate) skybox_color: [f32; 3],
+    pub camera: CameraState,
     model_center: [f32; 3],
-    egui_renderer: egui_wgpu::Renderer,
+    pub(crate) egui_renderer: egui_wgpu::Renderer,
     egui_ctx: egui::Context,
-    view_proj_matrix: nalgebra_glm::Mat4,
+    pub(crate) view_proj_matrix: nalgebra_glm::Mat4,
     // Store original vertices for animation
     original_vertices: Vec<Vertex>,
     // Store model for accessing vertex groups during animation
     model: Option<Model>,
-}
-
-// Structure for depth-sorted triangle rendering (like Delphi TSortPrimitive)
-#[derive(Clone)]
-struct SortedTriangle {
-    geo_num: u32,      // geoset_id + (layer_id << 16) - packed like Delphi
-    index_start: u32,  // Starting index in the index buffer for this triangle
-    depth: f32,        // Z-coordinate in view space (for sorting)
 }
 
 impl Renderer {
@@ -177,7 +168,8 @@ impl Renderer {
         });
 
         // Create material uniform buffer
-        let material_uniform = MaterialUniform::new([1.0, 0.0, 0.0], 0, false, FilterMode::None, 1.0, 0);
+        let material_uniform =
+            MaterialUniform::new([1.0, 0.0, 0.0], 0, false, FilterMode::None, 1.0, 0);
 
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Material Buffer"),
@@ -853,15 +845,15 @@ impl Renderer {
             material_bind_group,
             white_texture_view: diffuse_texture_view,
             white_texture_sampler: diffuse_sampler,
-            team_color: [1.0, 0.0, 0.0],               // Red by default
-            grid_major_color: [0.2, 0.2, 0.2],         // Dark gray major grid
-            grid_minor_color: [0.4, 0.4, 0.4],         // Light gray minor grid
-            skybox_color: [0.3, 0.5, 0.8],             // Light blue skybox
+            team_color: [1.0, 0.0, 0.0],       // Red by default
+            grid_major_color: [0.2, 0.2, 0.2], // Dark gray major grid
+            grid_minor_color: [0.4, 0.4, 0.4], // Light gray minor grid
+            skybox_color: [0.3, 0.5, 0.8],     // Light blue skybox
             camera: CameraState::new(
-                0.0,                                   // yaw: front view
-                std::f32::consts::PI * 0.15,          // pitch: 27 degrees down
-                500.0,                                 // distance
-                [0.0, 0.0, 0.0],                      // target: origin
+                0.0,                         // yaw: front view
+                std::f32::consts::PI * 0.15, // pitch: 27 degrees down
+                500.0,                       // distance
+                [0.0, 0.0, 0.0],             // target: origin
             ),
             model_center: [0.0, 0.0, 0.0],
             egui_renderer,
@@ -882,616 +874,6 @@ impl Renderer {
 
     pub fn egui_context(&self) -> egui::Context {
         self.egui_ctx.clone()
-    }
-
-    /// Collect and sort triangles from transparent/blend layers by depth
-    /// Returns sorted triangles ready for back-to-front rendering (like Delphi PrSorted)
-    fn collect_sorted_triangles(&self, show_geosets: &Vec<bool>) -> Vec<SortedTriangle> {
-        let mut sorted_triangles = Vec::new();
-
-        // Collect all triangles from transparent/blend layers
-        for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
-            // Skip if geoset is hidden via UI
-            if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
-                continue;
-            }
-
-            if let Some(mat_id) = geoset.material_id {
-                if mat_id < self.materials.len() {
-                    let material = &self.materials[mat_id];
-                    
-                    for (layer_idx, layer) in material.layers.iter().enumerate() {
-                        // Only collect transparent and blend layers
-                        if layer.filter_mode == FilterMode::Transparent
-                            || layer.filter_mode == FilterMode::Blend
-                        {
-                            // Pack geoset_id and layer_id like Delphi: GeoNum = geoset + (layer << 16)
-                            let geo_num = (geoset_idx as u32) | ((layer_idx as u32) << 16);
-
-                            // Process each face (triangle) in this geoset
-                            for (face_idx, face) in geoset.faces.iter().enumerate() {
-                                // Calculate average Z-coordinate of the triangle in view space
-                                let mut avg_z = 0.0;
-                                let mut valid_vertices = 0;
-                                
-                                for &vertex_idx in face.iter().take(3) {
-                                    if (vertex_idx as usize) < geoset.vertices.len() {
-                                        let pos = geoset.vertices[vertex_idx as usize];
-                                        // Transform vertex to view space using view_proj_matrix
-                                        let pos_vec4 = nalgebra_glm::vec4(pos[0], pos[1], pos[2], 1.0);
-                                        let transformed = self.view_proj_matrix * pos_vec4;
-                                        // Use Z-coordinate in clip space
-                                        avg_z += transformed.z;
-                                        valid_vertices += 1;
-                                    }
-                                }
-
-                                if valid_vertices == 3 {
-                                    avg_z /= 3.0;
-
-                                    sorted_triangles.push(SortedTriangle {
-                                        geo_num,
-                                        index_start: geoset.index_start + (face_idx * 3) as u32,
-                                        depth: avg_z,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Sort triangles back-to-front (higher Z = further away, render first)
-        sorted_triangles.sort_by(|a, b| b.depth.partial_cmp(&a.depth).unwrap_or(std::cmp::Ordering::Equal));
-
-        sorted_triangles
-    }
-
-    /// Render empty scene (no model loaded) - just grid and UI
-    pub fn render_empty(
-        &mut self,
-        show_grid: bool,
-        _paint_jobs: Vec<egui::ClippedPrimitive>,
-        _textures_delta: egui::TexturesDelta,
-        _screen_descriptor: ScreenDescriptor,
-    ) -> Result<(), wgpu::SurfaceError> {
-        // Skip rendering if window size is invalid
-        if self.config.width == 0 || self.config.height == 0 {
-            return Ok(());
-        }
-
-        // Calculate viewport dimensions
-        let viewport_width = self.config.width as f32;
-        let viewport_height = self.config.height as f32;
-        let aspect = viewport_width / viewport_height;
-        let far_plane = 10000.0;
-        let proj = nalgebra_glm::perspective(aspect, 45.0_f32.to_radians(), 0.1, far_plane);
-
-        let eye = nalgebra_glm::vec3(
-            self.camera.target[0] + self.camera.distance * self.camera.yaw.cos() * self.camera.pitch.cos(),
-            self.camera.target[1] + self.camera.distance * self.camera.yaw.sin() * self.camera.pitch.cos(),
-            self.camera.target[2] + self.camera.distance * self.camera.pitch.sin(),
-        );
-        let center = nalgebra_glm::vec3(self.camera.target[0], self.camera.target[1], self.camera.target[2]);
-        let up = nalgebra_glm::vec3(0.0, 0.0, 1.0);
-        let view = nalgebra_glm::look_at(&eye, &center, &up);
-        let view_proj = proj * view;
-        
-        self.view_proj_matrix = view_proj;
-        self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(view_proj.as_slice()));
-
-        let output = self.surface.get_current_texture()?;
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size: wgpu::Extent3d {
-                width: self.config.width,
-                height: self.config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
-
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: self.skybox_color[0] as f64,
-                            g: self.skybox_color[1] as f64,
-                            b: self.skybox_color[2] as f64,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
-
-            // Draw grid if enabled
-            if show_grid && self.num_lines > 0 {
-                render_pass.set_pipeline(&self.line_pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
-                render_pass.draw(0..self.num_lines, 0..1);
-            }
-        }
-
-        // Render egui
-        for (id, image_delta) in &_textures_delta.set {
-            self.egui_renderer.update_texture(&self.device, &self.queue, *id, image_delta);
-        }
-
-        self.egui_renderer.update_buffers(
-            &self.device,
-            &self.queue,
-            &mut encoder,
-            &_paint_jobs,
-            &_screen_descriptor,
-        );
-
-        {
-            let mut egui_rpass = encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("egui render pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                })
-                .forget_lifetime();
-
-            self.egui_renderer.render(&mut egui_rpass, &_paint_jobs, &_screen_descriptor);
-        }
-
-        for id in &_textures_delta.free {
-            self.egui_renderer.free_texture(id);
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
-
-        Ok(())
-    }
-
-    pub fn render(
-        &mut self,
-        model: &crate::model::Model,
-        show_skeleton: bool,
-        show_grid: bool,
-        show_bounding_box: bool,
-        wireframe_mode: bool,
-        far_plane: f32,
-        _current_frame: f32, // Will be used for bone animation later
-        show_geosets: &Vec<bool>,
-        _paint_jobs: Vec<egui::ClippedPrimitive>,
-        _textures_delta: egui::TexturesDelta,
-        _screen_descriptor: ScreenDescriptor,
-    ) -> Result<(), wgpu::SurfaceError> {
-        // Skip rendering if window size is invalid (minimized, not ready, etc.)
-        if self.config.width == 0 || self.config.height == 0 {
-            return Ok(());
-        }
-        
-        // Calculate viewport dimensions (no left panel anymore)
-        let viewport_width = self.config.width as f32;
-        let viewport_height = self.config.height as f32;
-
-        // Update camera matrix with correct aspect ratio for viewport
-        let aspect = viewport_width / viewport_height;
-        let proj = nalgebra_glm::perspective(aspect, 45.0_f32.to_radians(), 0.1, far_plane);
-
-        let eye = nalgebra_glm::vec3(
-            self.camera.target[0]
-                + self.camera.distance * self.camera.yaw.cos() * self.camera.pitch.cos(),
-            self.camera.target[1]
-                + self.camera.distance * self.camera.yaw.sin() * self.camera.pitch.cos(),
-            self.camera.target[2] + self.camera.distance * self.camera.pitch.sin(),
-        );
-        let center = nalgebra_glm::vec3(
-            self.camera.target[0],
-            self.camera.target[1],
-            self.camera.target[2],
-        );
-        let up = nalgebra_glm::vec3(0.0, 0.0, 1.0); // Z-up coordinate system
-        let view = nalgebra_glm::look_at(&eye, &center, &up);
-
-        let view_proj = proj * view;
-        self.view_proj_matrix = view_proj; // Store for axis label projection
-        self.queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::cast_slice(view_proj.as_slice()),
-        );
-
-        // Helper closure to update material uniform for specific geoset
-        let update_material_uniform = |geoset: &GeosetRenderInfo,
-                                       layer_index: usize|
-         -> MaterialUniform {
-            let (filter_mode, replaceable_id, layer_alpha, shading_flags) = if let Some(mat_id) = geoset.material_id {
-                if mat_id < model.materials.len() {
-                    let material = &model.materials[mat_id];
-                    if layer_index < material.layers.len() {
-                        let layer = &material.layers[layer_index];
-                        let rid = if let Some(tex_id) = layer.texture_id {
-                            if tex_id < model.textures.len() {
-                                model.textures[tex_id].replaceable_id
-                            } else {
-                                0
-                            }
-                        } else {
-                            0
-                        };
-                        // Use get_filter_mode() to respect overrides!
-                        let filter_mode = layer.get_filter_mode();
-                        // Use layer methods to get effective values (with overrides)
-                        let flags = layer.get_shading_flags();
-                        let shading_bits = crate::model::ShadingFlags::to_bits(&flags);
-                        let alpha = layer.get_alpha();
-                        
-                        (filter_mode, rid, alpha, shading_bits)
-                    } else {
-                        (FilterMode::None, 0, 1.0, 0)
-                    }
-                } else {
-                    (FilterMode::None, 0, 1.0, 0)
-                }
-            } else {
-                (FilterMode::None, 0, 1.0, 0)
-            };
-
-            MaterialUniform::new(self.team_color, replaceable_id, wireframe_mode, filter_mode, layer_alpha, shading_flags)
-        };
-
-        let output = self.surface.get_current_texture()?;
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size: wgpu::Extent3d {
-                width: self.config.width,
-                height: self.config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
-
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: self.skybox_color[0] as f64,
-                            g: self.skybox_color[1] as f64,
-                            b: self.skybox_color[2] as f64,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
-
-            // Set viewport and scissor for full screen (no left panel)
-            render_pass.set_viewport(
-                0.0,
-                0.0,
-                viewport_width,
-                viewport_height,
-                0.0,
-                1.0,
-            );
-
-            render_pass.set_scissor_rect(
-                0,
-                0,
-                viewport_width as u32,
-                viewport_height as u32,
-            );
-
-            // Draw axes and grid first
-            if show_grid {
-                render_pass.set_pipeline(&self.line_pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
-                render_pass.draw(0..self.num_lines, 0..1);
-            }
-
-            // Draw model in two passes: opaque first (with depth write), then transparent (without depth write)
-            if self.num_indices > 0 {
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-
-                // Helper function to check if material uses team glow (ReplaceableID=2)
-
-                // Helper closure to render a geoset with a specific layer
-                let render_geoset_layer = |render_pass: &mut wgpu::RenderPass,
-                                           geoset: &GeosetRenderInfo,
-                                           layer_index: usize| {
-                    // Determine texture bind group for this specific layer
-                    let texture_bind_group =
-                        if let Some(mat_id) = geoset.material_id {
-                            if mat_id < model.materials.len() {
-                                let material = &model.materials[mat_id];
-                                if layer_index < material.layers.len() {
-                                    let layer = &material.layers[layer_index];
-                                    if let Some(tex_id) = layer.texture_id {
-                                        if tex_id < self.texture_bind_groups.len() {
-                                            &self.texture_bind_groups[tex_id]
-                                        } else {
-                                            &self.texture_bind_groups[0]
-                                        }
-                                    } else {
-                                        &self.texture_bind_groups[0]
-                                    }
-                                } else {
-                                    &self.texture_bind_groups[0]
-                                }
-                            } else {
-                                &self.texture_bind_groups[0]
-                            }
-                        } else {
-                            &self.texture_bind_groups[0]
-                        };
-
-                    // Update material uniform for this specific geoset
-                    let material_uniform = update_material_uniform(geoset, layer_index);
-                    
-                    self.queue.write_buffer(
-                        &self.material_buffer,
-                        0,
-                        bytemuck::cast_slice(&[material_uniform]),
-                    );
-
-                    render_pass.set_bind_group(1, texture_bind_group, &[]);
-                    render_pass.set_bind_group(2, &self.material_bind_group, &[]);
-                    render_pass.draw_indexed(
-                        geoset.index_start..(geoset.index_start + geoset.index_count),
-                        0,
-                        0..1,
-                    );
-                };
-
-                // PASS 1: Render opaque materials with depth write enabled
-                let opaque_pipeline = if wireframe_mode {
-                    &self.wireframe_pipeline
-                } else {
-                    &self.render_pipeline
-                };
-                render_pass.set_pipeline(opaque_pipeline);
-
-                for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
-                    // Skip if geoset is hidden via UI
-                    if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
-                        continue;
-                    }
-
-                    if let Some(mat_id) = geoset.material_id {
-                        if mat_id < model.materials.len() {
-                            let material = &model.materials[mat_id];
-                            // Render ALL layers, not just first
-                            for (layer_idx, layer) in material.layers.iter().enumerate() {
-                                // Skip if layer is disabled in UI
-                                if !layer.is_enabled() {
-                                    continue;
-                                }
-                                
-                                // Get current filter mode (may be overridden by user)
-                                let current_filter_mode = layer.get_filter_mode();
-                                
-                                // Render None and Transparent layers in first pass
-                                // Transparent uses alpha testing (discard in shader), not blending
-                                if current_filter_mode == FilterMode::None || current_filter_mode == FilterMode::Transparent {
-                                    render_geoset_layer(&mut render_pass, geoset, layer_idx);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // PASS 2: Render transparent materials (blend mode: SRC_ALPHA, ONE_MINUS_SRC_ALPHA)
-                let transparent_pipeline = if wireframe_mode {
-                    &self.wireframe_transparent_pipeline
-                } else {
-                    &self.transparent_pipeline
-                };
-                render_pass.set_pipeline(transparent_pipeline);
-
-                for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
-                    // Skip if geoset is hidden via UI
-                    if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
-                        continue;
-                    }
-
-                    if let Some(mat_id) = geoset.material_id {
-                        if mat_id < model.materials.len() {
-                            let material = &model.materials[mat_id];
-                            // Render ALL layers, not just first
-                            for (layer_idx, layer) in material.layers.iter().enumerate() {
-                                // Skip if layer is disabled in UI
-                                if !layer.is_enabled() {
-                                    continue;
-                                }
-                                
-                                // Get current filter mode (may be overridden by user)
-                                let current_filter_mode = layer.get_filter_mode();
-                                
-                                // Render ONLY Blend layers in second pass
-                                // Transparent is rendered in first pass with alpha testing
-                                if current_filter_mode == FilterMode::Blend {
-                                    render_geoset_layer(&mut render_pass, geoset, layer_idx);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // PASS 3: Render additive materials (blend mode: ONE, ONE)
-                let additive_pipeline = if wireframe_mode {
-                    &self.wireframe_additive_pipeline
-                } else {
-                    &self.additive_pipeline
-                };
-                render_pass.set_pipeline(additive_pipeline);
-
-                for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
-                    // Skip if geoset is hidden via UI
-                    if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
-                        continue;
-                    }
-
-                    if let Some(mat_id) = geoset.material_id {
-                        if mat_id < model.materials.len() {
-                            let material = &model.materials[mat_id];
-                            // Render ALL layers, not just first
-                            for (layer_idx, layer) in material.layers.iter().enumerate() {
-                                // Skip if layer is disabled in UI
-                                if !layer.is_enabled() {
-                                    continue;
-                                }
-                                
-                                // Get current filter mode (may be overridden by user)
-                                let current_filter_mode = layer.get_filter_mode();
-                                
-                                // Render additive layers in third pass
-                                if current_filter_mode == FilterMode::Additive
-                                    || current_filter_mode == FilterMode::AddAlpha
-                                {
-                                    render_geoset_layer(&mut render_pass, geoset, layer_idx);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Draw skeleton on top (always visible)
-            if show_skeleton && self.num_skeleton_lines > 0 {
-                render_pass.set_pipeline(&self.line_pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.skeleton_vertex_buffer.slice(..));
-                render_pass.draw(0..(self.num_skeleton_lines * 2), 0..1);
-            }
-
-            // Draw bounding boxes
-            if show_bounding_box && self.num_bounding_box_lines > 0 {
-                render_pass.set_pipeline(&self.line_pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.bounding_box_vertex_buffer.slice(..));
-                render_pass.draw(0..(self.num_bounding_box_lines * 2), 0..1);
-            }
-        }
-
-        // Render egui properly
-        for (id, image_delta) in &_textures_delta.set {
-            self.egui_renderer
-                .update_texture(&self.device, &self.queue, *id, image_delta);
-        }
-
-        let screen_desc = _screen_descriptor;
-
-        // Update egui buffers before rendering
-        self.egui_renderer.update_buffers(
-            &self.device,
-            &self.queue,
-            &mut encoder,
-            &_paint_jobs,
-            &screen_desc,
-        );
-
-        {
-            let mut egui_rpass = encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("egui render pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                })
-                .forget_lifetime(); // This is the key!
-
-            self.egui_renderer
-                .render(&mut egui_rpass, &_paint_jobs, &screen_desc);
-        }
-
-        for id in &_textures_delta.free {
-            self.egui_renderer.free_texture(id);
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
-
-        Ok(())
     }
 
     pub fn update_model(&mut self, model: &Model) {
@@ -1539,14 +921,10 @@ impl Renderer {
             let index_count = (all_indices.len() as u32) - index_start;
 
             // Store vertex positions for depth sorting
-            let vertices: Vec<[f32; 3]> = geoset.vertices.iter()
-                .map(|v| v.position)
-                .collect();
+            let vertices: Vec<[f32; 3]> = geoset.vertices.iter().map(|v| v.position).collect();
 
             // Store faces for depth sorting
-            let faces: Vec<Vec<u32>> = geoset.faces.iter()
-                .map(|f| f.vertices.to_vec())
-                .collect();
+            let faces: Vec<Vec<u32>> = geoset.faces.iter().map(|f| f.vertices.to_vec()).collect();
 
             geosets_info.push(GeosetRenderInfo {
                 index_start,
@@ -1832,7 +1210,7 @@ impl Renderer {
             println!("No valid bounding boxes found in geosets");
         }
     }
-    
+
     /// Reset vertex buffer to original parsed vertices (no animation)
     pub fn reset_to_original_vertices(&mut self) {
         if self.original_vertices.is_empty() {
@@ -1846,7 +1224,7 @@ impl Renderer {
             bytemuck::cast_slice(&self.original_vertices),
         );
     }
-    
+
     /// Update vertex buffer with animated vertices
     /// Based on CalcAnimCoords from mdlDraw.pas (line 2310)
     pub fn update_animation(&mut self, animation_system: &crate::animation::AnimationSystem) {
@@ -1864,49 +1242,49 @@ impl Renderer {
         // Process each geoset
         for geoset in &model.geosets {
             let num_vertices = geoset.vertices.len();
-            
+
             // Transform each vertex in this geoset
             for i in 0..num_vertices {
                 if i >= geoset.vertex_groups.len() {
                     continue;
                 }
-                
+
                 let group_idx = geoset.vertex_groups[i] as usize;
                 if group_idx >= geoset.matrix_groups.len() {
                     continue;
                 }
-                
+
                 // Get bone indices for this vertex
                 let bone_indices = &geoset.matrix_groups[group_idx];
                 if bone_indices.is_empty() {
                     continue;
                 }
-                
+
                 let vertex_idx = vertex_offset + i;
                 if vertex_idx >= transformed_vertices.len() {
                     continue;
                 }
-                
+
                 let original_pos = nalgebra_glm::vec3(
                     self.original_vertices[vertex_idx].position[0],
                     self.original_vertices[vertex_idx].position[1],
                     self.original_vertices[vertex_idx].position[2],
                 );
-                
+
                 let original_normal = nalgebra_glm::vec3(
                     self.original_vertices[vertex_idx].normal[0],
                     self.original_vertices[vertex_idx].normal[1],
                     self.original_vertices[vertex_idx].normal[2],
                 );
-                
+
                 // Multi-bone blending: transform by each bone and average
                 let mut blended_pos = nalgebra_glm::vec3(0.0, 0.0, 0.0);
                 let mut blended_normal = nalgebra_glm::vec3(0.0, 0.0, 0.0);
                 let num_bones = bone_indices.len();
-                
+
                 for &bone_idx in bone_indices {
                     let bone_idx = bone_idx as usize;
-                    
+
                     // Get bone or helper
                     let bone = if bone_idx < animation_system.bones.len() {
                         &animation_system.bones[bone_idx]
@@ -1918,40 +1296,37 @@ impl Renderer {
                             continue;
                         }
                     };
-                    
+
                     // Get pivot point for this bone
                     let pivot = if bone_idx < animation_system.pivot_points.len() {
                         animation_system.pivot_points[bone_idx]
                     } else {
                         nalgebra_glm::vec3(0.0, 0.0, 0.0)
                     };
-                    
+
                     // Transform vertex: (pos - pivot) * matrix + abs_vector
                     // Based on Delphi code lines 2379-2400
                     let relative_pos = original_pos - pivot;
                     let transformed = bone.abs_matrix * relative_pos + bone.abs_vector;
                     blended_pos += transformed;
-                    
+
                     // Transform normal: normal * matrix (no translation)
                     let transformed_normal = bone.abs_matrix * original_normal;
                     blended_normal += transformed_normal;
                 }
-                
+
                 // Average the transformations (Delphi lines 2403-2410)
                 if num_bones > 0 {
                     let weight = 1.0 / num_bones as f32;
                     blended_pos *= weight;
                     blended_normal *= weight;
-                    
+
                     // Normalize the normal
                     let normalized_normal = nalgebra_glm::normalize(&blended_normal);
-                    
-                    transformed_vertices[vertex_idx].position = [
-                        blended_pos.x,
-                        blended_pos.y,
-                        blended_pos.z,
-                    ];
-                    
+
+                    transformed_vertices[vertex_idx].position =
+                        [blended_pos.x, blended_pos.y, blended_pos.z];
+
                     transformed_vertices[vertex_idx].normal = [
                         normalized_normal.x,
                         normalized_normal.y,
@@ -1959,7 +1334,7 @@ impl Renderer {
                     ];
                 }
             }
-            
+
             vertex_offset += num_vertices;
         }
 
@@ -1970,7 +1345,7 @@ impl Renderer {
             bytemuck::cast_slice(&transformed_vertices),
         );
     }
-    
+
     pub fn update_colors(&mut self, settings: &crate::settings::Settings, model: Option<&Model>) {
         // Update team color
         self.set_team_color(settings.colors.team_color);
@@ -1986,7 +1361,10 @@ impl Renderer {
         // Update bounding box color if model is loaded
         if let Some(model) = model {
             if settings.display.show_bounding_box {
-                self.generate_bounding_box_lines_with_color(model, settings.colors.bounding_box_color);
+                self.generate_bounding_box_lines_with_color(
+                    model,
+                    settings.colors.bounding_box_color,
+                );
             }
         }
     }
@@ -2066,32 +1444,6 @@ impl Renderer {
         self.num_lines = line_vertices.len() as u32;
     }
 
-    pub fn set_team_color(&mut self, color: [f32; 3]) {
-        self.team_color = color;
-        
-        // Collect IDs of textures that need to be recreated
-        let mut team_color_textures = Vec::new();
-        let mut team_glow_textures = Vec::new();
-        
-        for (tex_id, texture) in self.textures.iter().enumerate() {
-            if texture.replaceable_id == 1 {
-                team_color_textures.push(tex_id);
-            } else if texture.replaceable_id == 2 {
-                team_glow_textures.push(tex_id);
-            }
-        }
-        
-        // Recreate all RID=1 (team color) textures with new color
-        for tex_id in team_color_textures {
-            self.create_team_color_texture(tex_id);
-        }
-        
-        // Recreate all RID=2 (team glow) textures with new color
-        for tex_id in team_glow_textures {
-            self.create_team_glow_texture(tex_id);
-        }
-    }
-
     /// Load texture from RGBA data and update or add texture bind group
     pub fn load_texture_from_rgba(
         &mut self,
@@ -2163,7 +1515,7 @@ impl Renderer {
 
         // Ensure both vectors are large enough
         let required_size = texture_id + 1;
-        
+
         // Expand bind_groups if needed
         while self.texture_bind_groups.len() < required_size {
             // Fill gaps with white texture bind groups
@@ -2183,7 +1535,7 @@ impl Renderer {
             });
             self.texture_bind_groups.push(white_bind_group);
         }
-        
+
         // Expand texture_views if needed
         while self.texture_views.len() < required_size {
             self.texture_views.push(None);
@@ -2196,96 +1548,6 @@ impl Renderer {
         println!("Loaded texture {} ({}x{})", texture_id, width, height);
     }
 
-    /// Create team glow texture (32x32 with alpha map from WC3)
-    pub fn create_team_glow_texture(&mut self, texture_id: usize) {
-        // Team glow alpha map from WC3 (32x32) - from delphi/glow.pas
-        const TEAM_GLOW_ALPHA: [u8; 1024] = [
-            1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0,
-            0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 2,
-            2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4, 5, 6, 6, 6,
-            6, 5, 4, 3, 2, 2, 1, 2, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 4, 6, 7,
-            9, 9, 10, 9, 8, 7, 5, 3, 2, 1, 3, 2, 2, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 3, 4, 6,
-            8, 10, 13, 14, 15, 17, 16, 15, 12, 10, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1,
-            1, 1, 1, 7, 8, 10, 13, 16, 18, 20, 22, 24, 23, 21, 18, 15, 12, 10, 9, 4, 3, 2, 1, 0, 0,
-            0, 0, 0, 0, 1, 1, 0, 1, 3, 4, 5, 9, 15, 20, 25, 30, 35, 38, 38, 36, 34, 31, 26, 20, 13,
-            9, 9, 6, 2, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 3, 5, 10, 15, 21, 28, 35, 41, 47, 50, 51,
-            49, 46, 41, 36, 28, 20, 15, 10, 7, 3, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 2, 4, 7, 15, 20,
-            28, 38, 47, 55, 62, 67, 69, 67, 62, 56, 47, 37, 28, 21, 12, 9, 4, 1, 1, 1, 1, 0, 0, 0,
-            1, 1, 1, 3, 6, 9, 16, 23, 33, 45, 57, 68, 78, 83, 87, 83, 77, 69, 58, 45, 33, 25, 15,
-            11, 6, 2, 1, 1, 1, 0, 0, 0, 1, 1, 1, 4, 8, 11, 19, 27, 39, 53, 67, 81, 92, 99, 103, 99,
-            91, 81, 68, 53, 39, 30, 18, 13, 7, 3, 1, 1, 1, 1, 0, 0, 1, 0, 1, 5, 9, 13, 24, 32, 46,
-            61, 77, 92, 105, 112, 116, 112, 104, 93, 78, 61, 45, 35, 20, 16, 9, 4, 1, 1, 1, 1, 0,
-            0, 0, 0, 2, 5, 11, 14, 27, 36, 50, 67, 84, 100, 113, 120, 124, 120, 112, 100, 84, 66,
-            49, 39, 23, 17, 10, 4, 1, 1, 1, 1, 0, 0, 0, 0, 2, 6, 11, 15, 28, 36, 51, 68, 85, 102,
-            115, 123, 127, 122, 114, 102, 86, 67, 50, 40, 24, 18, 11, 4, 1, 1, 1, 1, 1, 1, 1, 1, 2,
-            5, 11, 15, 25, 36, 51, 67, 82, 97, 112, 121, 123, 118, 110, 98, 83, 66, 49, 39, 22, 17,
-            10, 4, 2, 1, 0, 0, 1, 1, 1, 1, 2, 5, 10, 14, 24, 34, 48, 63, 77, 90, 104, 113, 116,
-            111, 103, 92, 78, 61, 46, 36, 20, 16, 9, 4, 1, 1, 0, 0, 1, 1, 1, 1, 1, 4, 9, 12, 22,
-            30, 43, 56, 68, 80, 92, 99, 104, 99, 92, 82, 69, 54, 39, 30, 18, 14, 8, 3, 1, 1, 0, 0,
-            1, 1, 1, 1, 1, 3, 7, 10, 18, 25, 35, 47, 58, 69, 78, 84, 88, 84, 78, 69, 58, 45, 33,
-            25, 16, 12, 6, 3, 1, 1, 0, 0, 0, 1, 1, 1, 1, 2, 5, 8, 13, 18, 27, 37, 47, 56, 64, 68,
-            70, 67, 62, 55, 47, 37, 26, 20, 12, 9, 5, 2, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 4, 6, 9, 13,
-            19, 27, 36, 43, 48, 51, 52, 50, 46, 41, 35, 28, 20, 14, 10, 7, 3, 1, 1, 1, 0, 0, 0, 1,
-            1, 1, 0, 1, 3, 4, 7, 9, 13, 19, 25, 30, 33, 34, 36, 34, 32, 29, 25, 20, 14, 9, 8, 5, 2,
-            1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 2, 4, 6, 7, 9, 13, 18, 21, 23, 23, 27, 25, 23, 21, 19,
-            15, 9, 6, 6, 4, 2, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 4, 5, 6, 8, 10, 12, 13, 14,
-            16, 15, 14, 12, 10, 8, 7, 6, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3, 4,
-            6, 7, 8, 10, 10, 10, 9, 8, 7, 5, 4, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-            1, 1, 1, 2, 2, 3, 4, 5, 5, 5, 4, 4, 3, 2, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-            1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1,
-            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1,
-            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0,
-            0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
-        ];
-
-        // Create RGBA texture with team color applied
-        let mut rgba_data = Vec::with_capacity(32 * 32 * 4);
-        
-        // Get team color as u8
-        let r = (self.team_color[0] * 255.0) as u8;
-        let g = (self.team_color[1] * 255.0) as u8;
-        let b = (self.team_color[2] * 255.0) as u8;
-        
-        for alpha_byte in &TEAM_GLOW_ALPHA {
-            let alpha = (*alpha_byte as f32 / 127.0 * 255.0) as u8; // Scale 0-127 to 0-255
-            // Apply team color with alpha
-            rgba_data.push((r as f32 * alpha as f32 / 255.0) as u8); // R * alpha
-            rgba_data.push((g as f32 * alpha as f32 / 255.0) as u8); // G * alpha
-            rgba_data.push((b as f32 * alpha as f32 / 255.0) as u8); // B * alpha
-            rgba_data.push(alpha); // A - from map
-        }
-
-        self.load_texture_from_rgba(&rgba_data, 32, 32, texture_id);
-        println!("Created team glow texture at index {}", texture_id);
-    }
-    
-    /// Create team color texture (solid team color texture)
-    pub fn create_team_color_texture(&mut self, texture_id: usize) {
-        // Create a simple 4x4 texture with actual team color
-        // RID=1 means this texture is REPLACED by team color texture
-        let mut rgba_data = Vec::with_capacity(4 * 4 * 4);
-        
-        // Convert team color from [f32; 3] to [u8; 4]
-        let r = (self.team_color[0] * 255.0) as u8;
-        let g = (self.team_color[1] * 255.0) as u8;
-        let b = (self.team_color[2] * 255.0) as u8;
-        
-        // Fill 4x4 texture with solid team color
-        for _ in 0..16 {
-            rgba_data.push(r);     // R
-            rgba_data.push(g);     // G
-            rgba_data.push(b);     // B
-            rgba_data.push(255);   // A - Full opacity
-        }
-        
-        self.load_texture_from_rgba(&rgba_data, 4, 4, texture_id);
-        println!("Created team color texture at index {} (solid color)", texture_id);
-    }
-    
     /// Get egui TextureId for a loaded texture
     pub fn get_egui_texture_id(&mut self, texture_id: usize) -> Option<egui::TextureId> {
         if texture_id < self.texture_views.len() {

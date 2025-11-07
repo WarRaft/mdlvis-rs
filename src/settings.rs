@@ -46,9 +46,9 @@ impl Default for ColorSettings {
     fn default() -> Self {
         Self {
             team_color: [1.0, 0.0, 0.0],
-            skybox_color: [0.3, 0.5, 0.8],
-            grid_major_color: [0.2, 0.2, 0.2],
-            grid_minor_color: [0.4, 0.4, 0.4],
+            skybox_color: [0.02, 0.02, 0.02],
+            grid_major_color: [0.06, 0.06, 0.06],
+            grid_minor_color: [0.04, 0.04, 0.04],
             bounding_box_color: [1.0, 1.0, 0.0],
         }
     }

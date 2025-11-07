@@ -1,5 +1,5 @@
 use crate::error::MdlError;
-use crate::model::{Geoset, Model};
+use crate::model::{Geoset, Model, Normal, Vertex};
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -39,7 +39,7 @@ pub fn geoset_parse(file: &mut File, model: &mut Model, geos_size: u32) -> Resul
                         let x = file.read_f32::<LittleEndian>()?;
                         let y = file.read_f32::<LittleEndian>()?;
                         let z = file.read_f32::<LittleEndian>()?;
-                        geoset.vertices.push(crate::model::Vertex {
+                        geoset.vertices.push(Vertex {
                             position: [x, y, z],
                         });
                     }
@@ -52,7 +52,7 @@ pub fn geoset_parse(file: &mut File, model: &mut Model, geos_size: u32) -> Resul
                         let z = file.read_f32::<LittleEndian>()?;
                         geoset
                             .normals
-                            .push(crate::model::Normal { normal: [x, y, z] });
+                            .push(Normal { normal: [x, y, z] });
                     }
                 }
                 b"PTYP" => {
@@ -90,11 +90,24 @@ pub fn geoset_parse(file: &mut File, model: &mut Model, geos_size: u32) -> Resul
                 b"MATS" => {
                     // Matrix Groups Data: bone indices for each group
                     let total_count = file.read_u32::<LittleEndian>()? as usize;
+                    let mut indices = Vec::with_capacity(total_count);
+                    for _ in 0..total_count {
+                        indices.push(file.read_u32::<LittleEndian>()?);
+                    }
 
-                    // Read bone indices into the pre-allocated matrix groups
+                    // Distribute indices into matrix_groups
+                    let mut idx = 0;
+                    let expected: usize = geoset.matrix_groups.iter().map(|g| g.capacity()).sum();
+                    if expected != total_count {
+                        eprintln!("[mdlvis-rs] MATS count mismatch: total_count={}, sum(capacity)={}", total_count, expected);
+                    }
                     for group in &mut geoset.matrix_groups {
-                        for _ in 0..group.capacity() {
-                            group.push(file.read_u32::<LittleEndian>()?);
+                        let cap = group.capacity();
+                        for _ in 0..cap {
+                            if idx < indices.len() {
+                                group.push(indices[idx]);
+                                idx += 1;
+                            }
                         }
                     }
 
