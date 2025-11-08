@@ -1,5 +1,5 @@
-use crate::texture::manager::TextureManager;
 use crate::renderer::renderer::Renderer;
+use crate::texture::manager::{TextureManager, TextureStatus};
 
 pub struct TexturePanel {
     // Panel state is now in Settings
@@ -9,7 +9,7 @@ pub struct TexturePanel {
 
 impl TexturePanel {
     pub fn new() -> Self {
-        Self { 
+        Self {
             viewer_texture_id: None,
             error_info_texture_id: None,
         }
@@ -25,19 +25,19 @@ impl TexturePanel {
         if !*show_panel {
             return None;
         }
-        
+
         let mut load_requests = Vec::new();
-        
+
         // Show texture viewer if requested
         if let Some(texture_id) = self.viewer_texture_id {
             self.show_texture_viewer(ctx, texture_manager, renderer, texture_id);
         }
-        
+
         // Show error info if requested
         if let Some(texture_id) = self.error_info_texture_id {
             self.show_error_info(ctx, texture_manager, texture_id);
         }
-        
+
         egui::Window::new("Textures")
             .default_width(400.0)
             .default_height(600.0)
@@ -94,13 +94,15 @@ impl TexturePanel {
                         for texture in &texture_manager.textures {
                             ui.group(|ui| {
                                 ui.set_min_width(ui.available_width());
-                                
+
                                 // Header with ID and status indicator
                                 ui.horizontal(|ui| {
                                     // Status circle
                                     let radius = 6.0;
-                                    let (rect, _response) =
-                                        ui.allocate_exact_size(egui::vec2(radius * 2.0, radius * 2.0), egui::Sense::hover());
+                                    let (rect, _response) = ui.allocate_exact_size(
+                                        egui::vec2(radius * 2.0, radius * 2.0),
+                                        egui::Sense::hover(),
+                                    );
                                     ui.painter().circle_filled(
                                         rect.center(),
                                         radius,
@@ -113,7 +115,10 @@ impl TexturePanel {
                                     // Replaceable indicator - always show if RID != 0
                                     // All RID textures use same yellow/gold color
                                     if texture.replaceable_id == 1 {
-                                        ui.colored_label(egui::Color32::GOLD, "[RID: 1 Team Color]");
+                                        ui.colored_label(
+                                            egui::Color32::GOLD,
+                                            "[RID: 1 Team Color]",
+                                        );
                                     } else if texture.replaceable_id == 2 {
                                         ui.colored_label(egui::Color32::GOLD, "[RID: 2 Team Glow]");
                                     } else if texture.replaceable_id > 0 {
@@ -161,7 +166,7 @@ impl TexturePanel {
                                             self.viewer_texture_id = Some(texture.texture_id);
                                         }
                                     }
-                                    
+
                                     // Don't show Load/Retry buttons for RID textures - they are generated, not loaded
                                     if texture.replaceable_id == 0 {
                                         if !texture.is_loaded() && !texture.is_loading() {
@@ -175,7 +180,8 @@ impl TexturePanel {
                                                 load_requests.push(texture.texture_id);
                                             }
                                             if ui.button("⚠ Info").clicked() {
-                                                self.error_info_texture_id = Some(texture.texture_id);
+                                                self.error_info_texture_id =
+                                                    Some(texture.texture_id);
                                             }
                                         }
                                     }
@@ -192,7 +198,7 @@ impl TexturePanel {
             Some(load_requests)
         }
     }
-    
+
     fn show_texture_viewer(
         &mut self,
         ctx: &egui::Context,
@@ -201,7 +207,7 @@ impl TexturePanel {
         texture_id: usize,
     ) {
         let mut is_open = true;
-        
+
         egui::Window::new(format!("🖼 Texture Viewer - ID: {}", texture_id))
             .default_width(512.0)
             .default_height(512.0)
@@ -209,13 +215,13 @@ impl TexturePanel {
             .open(&mut is_open)
             .show(ctx, |ui| {
                 ui.heading("Texture Viewer");
-                
+
                 // Try to get egui texture ID from renderer
                 if let Some(egui_texture_id) = renderer.get_egui_texture_id(texture_id) {
                     // Calculate size to fit in window while maintaining aspect ratio
                     let available_size = ui.available_size();
                     let max_size = available_size.min_elem().min(512.0);
-                    
+
                     ui.image(egui::ImageSource::Texture(egui::load::SizedTexture::new(
                         egui_texture_id,
                         egui::vec2(max_size, max_size),
@@ -225,12 +231,12 @@ impl TexturePanel {
                     ui.label("Please load the texture first from the Textures window");
                 }
             });
-        
+
         if !is_open {
             self.viewer_texture_id = None;
         }
     }
-    
+
     fn show_error_info(
         &mut self,
         ctx: &egui::Context,
@@ -238,7 +244,7 @@ impl TexturePanel {
         texture_id: usize,
     ) {
         let mut is_open = true;
-        
+
         if let Some(texture) = texture_manager.textures.get(texture_id) {
             egui::Window::new(format!("⚠ Texture Error - ID: {}", texture_id))
                 .default_width(400.0)
@@ -247,42 +253,37 @@ impl TexturePanel {
                 .show(ctx, |ui| {
                     ui.heading("Texture Load Error");
                     ui.separator();
-                    
+
                     ui.label("Texture ID:");
                     ui.label(format!("  {}", texture.texture_id));
                     ui.add_space(8.0);
-                    
+
                     if !texture.filename.is_empty() {
                         ui.label("Filename:");
                         ui.label(format!("  {}", texture.filename));
                         ui.add_space(8.0);
                     }
-                    
+
                     if let Some(local_path) = &texture.local_path {
                         ui.label("Attempted Path:");
                         ui.label(format!("  {}", local_path.display()));
                         ui.add_space(8.0);
                     }
-                    
+
                     if texture.replaceable_id > 0 {
                         ui.label("Replaceable ID:");
                         ui.label(format!("  {}", texture.replaceable_id));
                         ui.add_space(8.0);
                     }
-                    
+
                     ui.label("Error:");
                     let error_msg = match &texture.status {
-                        crate::texture::manager::TextureStatus::ErrorLocal(msg) => msg.clone(),
-                        crate::texture::manager::TextureStatus::ErrorRemote(msg) => msg.clone(),
-                        crate::texture::manager::TextureStatus::NotFound => "File not found".to_string(),
+                        TextureStatus::Error(msg) => msg.clone(),
                         _ => "Unknown error".to_string(),
                     };
-                    ui.colored_label(
-                        egui::Color32::RED,
-                        format!("  {}", error_msg),
-                    );
+                    ui.colored_label(egui::Color32::RED, format!("  {}", error_msg));
                     ui.add_space(8.0);
-                    
+
                     ui.separator();
                     ui.label("💡 Suggestions:");
                     ui.label("  • Check if the file exists in the model's directory");
@@ -290,7 +291,7 @@ impl TexturePanel {
                     ui.label("  • Ensure the file is not corrupted");
                 });
         }
-        
+
         if !is_open {
             self.error_info_texture_id = None;
         }

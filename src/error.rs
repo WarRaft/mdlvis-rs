@@ -71,32 +71,6 @@ impl std::error::Error for MdlError {
     }
 }
 
-impl From<io::Error> for MdlError {
-    fn from(err: io::Error) -> Self {
-        MdlError::new("io-error").push_std(err)
-    }
-}
-
-impl From<reqwest::Error> for MdlError {
-    fn from(err: reqwest::Error) -> Self {
-        MdlError::new("network-error")
-            .with_arg("msg", err.to_string())
-            .push_std(err)
-    }
-}
-
-impl From<blp::error::error::BlpError> for MdlError {
-    fn from(err: blp::error::error::BlpError) -> Self {
-        MdlError::new("texture-decode-error").with_arg("msg", format!("BLP error: {:?}", err))
-    }
-}
-
-impl From<Box<dyn std::error::Error + Send + Sync>> for MdlError {
-    fn from(err: Box<dyn std::error::Error + Send + Sync>) -> Self {
-        MdlError::new("parse-error").with_arg("msg", err.to_string())
-    }
-}
-
 impl From<String> for MdlError {
     fn from(s: String) -> Self {
         MdlError::new("string-error").with_arg("msg", s)
@@ -106,5 +80,35 @@ impl From<String> for MdlError {
 impl From<&str> for MdlError {
     fn from(s: &str) -> Self {
         MdlError::new("str-error").with_arg("msg", s)
+    }
+}
+
+impl From<reqwest::Error> for MdlError {
+    fn from(err: reqwest::Error) -> Self {
+        MdlError::new("reqwest::Error").push_std(err)
+    }
+}
+
+impl From<io::Error> for MdlError {
+    fn from(err: io::Error) -> Self {
+        MdlError::new("io-error").push_std(err)
+    }
+}
+
+impl From<blp::error::error::BlpError> for MdlError {
+    fn from(err: blp::error::error::BlpError) -> Self {
+        MdlError::new("blp-error").push_std(err)
+    }
+}
+
+impl From<wgpu::CreateSurfaceError> for MdlError {
+    fn from(err: wgpu::CreateSurfaceError) -> Self {
+        MdlError::new("wgpu::CreateSurfaceError").push_std(err)
+    }
+}
+
+impl From<winit::error::EventLoopError> for MdlError {
+    fn from(err: winit::error::EventLoopError) -> Self {
+        MdlError::new("winit::error::EventLoopError").push_std(err)
     }
 }

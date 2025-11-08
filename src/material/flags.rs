@@ -36,7 +36,7 @@ impl ShadingFlags {
     }
 
     /// Convert array of flags back to bitfield
-    pub fn to_bits(flags: &[Self]) -> u32 {
+    pub fn get_bits(flags: &[Self]) -> u32 {
         let mut bits = 0u32;
         for flag in flags {
             bits |= *flag as u32;

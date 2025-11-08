@@ -5,174 +5,18 @@ use crate::renderer::renderer::Renderer;
 use egui_wgpu::ScreenDescriptor;
 
 impl Renderer {
-    /// Render empty scene (no model loaded) - just grid and UI
-    pub fn render_empty(
-        &mut self,
-        show_grid: bool,
-        _paint_jobs: Vec<egui::ClippedPrimitive>,
-        _textures_delta: egui::TexturesDelta,
-        _screen_descriptor: ScreenDescriptor,
-    ) -> Result<(), wgpu::SurfaceError> {
-        // Skip rendering if window size is invalid
-        if self.config.width == 0 || self.config.height == 0 {
-            return Ok(());
-        }
-
-        // Calculate viewport dimensions
-        let viewport_width = self.config.width as f32;
-        let viewport_height = self.config.height as f32;
-        let aspect = viewport_width / viewport_height;
-        let far_plane = 10000.0;
-        let proj = nalgebra_glm::perspective(aspect, 45.0_f32.to_radians(), 0.1, far_plane);
-
-        let eye = nalgebra_glm::vec3(
-            self.camera.target[0]
-                + self.camera.distance * self.camera.yaw.cos() * self.camera.pitch.cos(),
-            self.camera.target[1]
-                + self.camera.distance * self.camera.yaw.sin() * self.camera.pitch.cos(),
-            self.camera.target[2] + self.camera.distance * self.camera.pitch.sin(),
-        );
-        let center = nalgebra_glm::vec3(
-            self.camera.target[0],
-            self.camera.target[1],
-            self.camera.target[2],
-        );
-        let up = nalgebra_glm::vec3(0.0, 0.0, 1.0);
-        let view = nalgebra_glm::look_at(&eye, &center, &up);
-        let view_proj = proj * view;
-
-        self.view_proj_matrix = view_proj;
-        self.queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::cast_slice(view_proj.as_slice()),
-        );
-
-        let output = self.surface.get_current_texture()?;
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size: wgpu::Extent3d {
-                width: self.config.width,
-                height: self.config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
-
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: self.skybox_color[0] as f64,
-                            g: self.skybox_color[1] as f64,
-                            b: self.skybox_color[2] as f64,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
-
-            // Draw grid if enabled
-            if show_grid && self.num_lines > 0 {
-                render_pass.set_pipeline(&self.line_pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
-                render_pass.draw(0..self.num_lines, 0..1);
-            }
-        }
-
-        // Render egui
-        for (id, image_delta) in &_textures_delta.set {
-            self.egui_renderer
-                .update_texture(&self.device, &self.queue, *id, image_delta);
-        }
-
-        self.egui_renderer.update_buffers(
-            &self.device,
-            &self.queue,
-            &mut encoder,
-            &_paint_jobs,
-            &_screen_descriptor,
-        );
-
-        {
-            let mut egui_rpass = encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("egui render pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                })
-                .forget_lifetime();
-
-            self.egui_renderer
-                .render(&mut egui_rpass, &_paint_jobs, &_screen_descriptor);
-        }
-
-        for id in &_textures_delta.free {
-            self.egui_renderer.free_texture(id);
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
-
-        Ok(())
-    }
-
     pub fn render(
         &mut self,
-        model: &Model,
+        model_opt: Option<&Model>,
         show_skeleton: bool,
         show_grid: bool,
         show_bounding_box: bool,
         wireframe_mode: bool,
         far_plane: f32,
-        _current_frame: f32, // Will be used for bone animation later
         show_geosets: &Vec<bool>,
-        _paint_jobs: Vec<egui::ClippedPrimitive>,
-        _textures_delta: egui::TexturesDelta,
-        _screen_descriptor: ScreenDescriptor,
+        paint_jobs: Vec<egui::ClippedPrimitive>,
+        textures_delta: egui::TexturesDelta,
+        screen_descriptor: ScreenDescriptor,
     ) -> Result<(), wgpu::SurfaceError> {
         // Skip rendering if window size is invalid (minimized, not ready, etc.)
         if self.config.width == 0 || self.config.height == 0 {
@@ -211,31 +55,36 @@ impl Renderer {
         );
 
         // Helper closure to update material uniform for specific geoset
+        // Works with optional model (model_opt): if None, returns defaults
         let update_material_uniform =
             |geoset: &GeosetRenderInfo, layer_index: usize| -> MaterialUniform {
                 let (filter_mode, replaceable_id, layer_alpha, shading_flags) =
                     if let Some(mat_id) = geoset.material_id {
-                        if mat_id < model.materials.len() {
-                            let material = &model.materials[mat_id];
-                            if layer_index < material.layers.len() {
-                                let layer = &material.layers[layer_index];
-                                let rid = if let Some(tex_id) = layer.texture_id {
-                                    if tex_id < model.textures.len() {
-                                        model.textures[tex_id].replaceable_id
+                        if let Some(m) = model_opt {
+                            if mat_id < m.materials.len() {
+                                let material = &m.materials[mat_id];
+                                if layer_index < material.layers.len() {
+                                    let layer = &material.layers[layer_index];
+                                    let rid = if let Some(tex_id) = layer.texture_id {
+                                        if tex_id < m.textures.len() {
+                                            m.textures[tex_id].replaceable_id
+                                        } else {
+                                            0
+                                        }
                                     } else {
                                         0
-                                    }
-                                } else {
-                                    0
-                                };
-                                // Use get_filter_mode() to respect overrides!
-                                let filter_mode = layer.get_filter_mode();
-                                // Use layer methods to get effective values (with overrides)
-                                let flags = layer.get_shading_flags();
-                                let shading_bits = crate::model::ShadingFlags::to_bits(&flags);
-                                let alpha = layer.get_alpha();
+                                    };
+                                    // Use get_filter_mode() to respect overrides!
+                                    let filter_mode = layer.get_filter_mode();
+                                    // Use layer methods to get effective values (with overrides)
+                                    let flags = layer.get_shading_flags();
+                                    let shading_bits = crate::model::ShadingFlags::get_bits(&flags);
+                                    let alpha = layer.get_alpha();
 
-                                (filter_mode, rid, alpha, shading_bits)
+                                    (filter_mode, rid, alpha, shading_bits)
+                                } else {
+                                    (FilterMode::None, 0, 1.0, 0)
+                                }
                             } else {
                                 (FilterMode::None, 0, 1.0, 0)
                             }
@@ -326,28 +175,32 @@ impl Renderer {
             }
 
             // Draw model in two passes: opaque first (with depth write), then transparent (without depth write)
-            if self.num_indices > 0 {
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            if let Some(model) = model_opt {
+                if self.num_indices > 0 {
+                    render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                    render_pass
+                        .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-                // Helper function to check if material uses team glow (ReplaceableID=2)
+                    // Helper function to check if material uses team glow (ReplaceableID=2)
 
-                // Helper closure to render a geoset with a specific layer
-                let render_geoset_layer =
-                    |render_pass: &mut wgpu::RenderPass,
-                     geoset: &GeosetRenderInfo,
-                     layer_index: usize| {
-                        // Determine texture bind group for this specific layer
-                        let texture_bind_group = if let Some(mat_id) = geoset.material_id {
-                            if mat_id < model.materials.len() {
-                                let material = &model.materials[mat_id];
-                                if layer_index < material.layers.len() {
-                                    let layer = &material.layers[layer_index];
-                                    if let Some(tex_id) = layer.texture_id {
-                                        if tex_id < self.texture_bind_groups.len() {
-                                            &self.texture_bind_groups[tex_id]
+                    // Helper closure to render a geoset with a specific layer
+                    let render_geoset_layer =
+                        |render_pass: &mut wgpu::RenderPass,
+                         geoset: &GeosetRenderInfo,
+                         layer_index: usize| {
+                            // Determine texture bind group for this specific layer
+                            let texture_bind_group = if let Some(mat_id) = geoset.material_id {
+                                if mat_id < model.materials.len() {
+                                    let material = &model.materials[mat_id];
+                                    if layer_index < material.layers.len() {
+                                        let layer = &material.layers[layer_index];
+                                        if let Some(tex_id) = layer.texture_id {
+                                            if tex_id < self.texture_bind_groups.len() {
+                                                &self.texture_bind_groups[tex_id]
+                                            } else {
+                                                &self.texture_bind_groups[0]
+                                            }
                                         } else {
                                             &self.texture_bind_groups[0]
                                         }
@@ -359,175 +212,173 @@ impl Renderer {
                                 }
                             } else {
                                 &self.texture_bind_groups[0]
-                            }
-                        } else {
-                            &self.texture_bind_groups[0]
+                            };
+
+                            // Update material uniform for this specific geoset
+                            let material_uniform = update_material_uniform(geoset, layer_index);
+
+                            self.queue.write_buffer(
+                                &self.material_buffer,
+                                0,
+                                bytemuck::cast_slice(&[material_uniform]),
+                            );
+
+                            render_pass.set_bind_group(1, texture_bind_group, &[]);
+                            render_pass.set_bind_group(2, &self.material_bind_group, &[]);
+                            render_pass.draw_indexed(
+                                geoset.index_start..(geoset.index_start + geoset.index_count),
+                                0,
+                                0..1,
+                            );
                         };
 
-                        // Update material uniform for this specific geoset
-                        let material_uniform = update_material_uniform(geoset, layer_index);
-
-                        self.queue.write_buffer(
-                            &self.material_buffer,
-                            0,
-                            bytemuck::cast_slice(&[material_uniform]),
-                        );
-
-                        render_pass.set_bind_group(1, texture_bind_group, &[]);
-                        render_pass.set_bind_group(2, &self.material_bind_group, &[]);
-                        render_pass.draw_indexed(
-                            geoset.index_start..(geoset.index_start + geoset.index_count),
-                            0,
-                            0..1,
-                        );
+                    // PASS 1: Render opaque materials with depth write enabled
+                    let opaque_pipeline = if wireframe_mode {
+                        &self.wireframe_pipeline
+                    } else {
+                        &self.render_pipeline
                     };
+                    render_pass.set_pipeline(opaque_pipeline);
 
-                // PASS 1: Render opaque materials with depth write enabled
-                let opaque_pipeline = if wireframe_mode {
-                    &self.wireframe_pipeline
-                } else {
-                    &self.render_pipeline
-                };
-                render_pass.set_pipeline(opaque_pipeline);
+                    for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
+                        // Skip if geoset is hidden via UI
+                        if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
+                            continue;
+                        }
 
-                for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
-                    // Skip if geoset is hidden via UI
-                    if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
-                        continue;
+                        if let Some(mat_id) = geoset.material_id {
+                            if mat_id < model.materials.len() {
+                                let material = &model.materials[mat_id];
+                                // Render ALL layers, not just first
+                                for (layer_idx, layer) in material.layers.iter().enumerate() {
+                                    // Skip if layer is disabled in UI
+                                    if !layer.is_enabled() {
+                                        continue;
+                                    }
+
+                                    // Get current filter mode (may be overridden by user)
+                                    let current_filter_mode = layer.get_filter_mode();
+
+                                    // Render None and Transparent layers in first pass
+                                    // Transparent uses alpha testing (discard in shader), not blending
+                                    if current_filter_mode == FilterMode::None
+                                        || current_filter_mode == FilterMode::Transparent
+                                    {
+                                        render_geoset_layer(&mut render_pass, geoset, layer_idx);
+                                    }
+                                }
+                            }
+                        }
                     }
 
-                    if let Some(mat_id) = geoset.material_id {
-                        if mat_id < model.materials.len() {
-                            let material = &model.materials[mat_id];
-                            // Render ALL layers, not just first
-                            for (layer_idx, layer) in material.layers.iter().enumerate() {
-                                // Skip if layer is disabled in UI
-                                if !layer.is_enabled() {
-                                    continue;
+                    // PASS 2: Render transparent materials (blend mode: SRC_ALPHA, ONE_MINUS_SRC_ALPHA)
+                    let transparent_pipeline = if wireframe_mode {
+                        &self.wireframe_transparent_pipeline
+                    } else {
+                        &self.transparent_pipeline
+                    };
+                    render_pass.set_pipeline(transparent_pipeline);
+
+                    for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
+                        // Skip if geoset is hidden via UI
+                        if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
+                            continue;
+                        }
+
+                        if let Some(mat_id) = geoset.material_id {
+                            if mat_id < model.materials.len() {
+                                let material = &model.materials[mat_id];
+                                // Render ALL layers, not just first
+                                for (layer_idx, layer) in material.layers.iter().enumerate() {
+                                    // Skip if layer is disabled in UI
+                                    if !layer.is_enabled() {
+                                        continue;
+                                    }
+
+                                    // Get current filter mode (may be overridden by user)
+                                    let current_filter_mode = layer.get_filter_mode();
+
+                                    // Render ONLY Blend layers in second pass
+                                    // Transparent is rendered in first pass with alpha testing
+                                    if current_filter_mode == FilterMode::Blend {
+                                        render_geoset_layer(&mut render_pass, geoset, layer_idx);
+                                    }
                                 }
+                            }
+                        }
+                    }
 
-                                // Get current filter mode (may be overridden by user)
-                                let current_filter_mode = layer.get_filter_mode();
+                    // PASS 3: Render additive materials (blend mode: ONE, ONE)
+                    let additive_pipeline = if wireframe_mode {
+                        &self.wireframe_additive_pipeline
+                    } else {
+                        &self.additive_pipeline
+                    };
+                    render_pass.set_pipeline(additive_pipeline);
 
-                                // Render None and Transparent layers in first pass
-                                // Transparent uses alpha testing (discard in shader), not blending
-                                if current_filter_mode == FilterMode::None
-                                    || current_filter_mode == FilterMode::Transparent
-                                {
-                                    render_geoset_layer(&mut render_pass, geoset, layer_idx);
+                    for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
+                        // Skip if geoset is hidden via UI
+                        if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
+                            continue;
+                        }
+
+                        if let Some(mat_id) = geoset.material_id {
+                            if mat_id < model.materials.len() {
+                                let material = &model.materials[mat_id];
+                                // Render ALL layers, not just first
+                                for (layer_idx, layer) in material.layers.iter().enumerate() {
+                                    // Skip if layer is disabled in UI
+                                    if !layer.is_enabled() {
+                                        continue;
+                                    }
+
+                                    // Get current filter mode (may be overridden by user)
+                                    let current_filter_mode = layer.get_filter_mode();
+
+                                    // Render additive layers in third pass
+                                    if current_filter_mode == FilterMode::Additive
+                                        || current_filter_mode == FilterMode::AddAlpha
+                                    {
+                                        render_geoset_layer(&mut render_pass, geoset, layer_idx);
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                // PASS 2: Render transparent materials (blend mode: SRC_ALPHA, ONE_MINUS_SRC_ALPHA)
-                let transparent_pipeline = if wireframe_mode {
-                    &self.wireframe_transparent_pipeline
-                } else {
-                    &self.transparent_pipeline
-                };
-                render_pass.set_pipeline(transparent_pipeline);
-
-                for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
-                    // Skip if geoset is hidden via UI
-                    if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
-                        continue;
-                    }
-
-                    if let Some(mat_id) = geoset.material_id {
-                        if mat_id < model.materials.len() {
-                            let material = &model.materials[mat_id];
-                            // Render ALL layers, not just first
-                            for (layer_idx, layer) in material.layers.iter().enumerate() {
-                                // Skip if layer is disabled in UI
-                                if !layer.is_enabled() {
-                                    continue;
-                                }
-
-                                // Get current filter mode (may be overridden by user)
-                                let current_filter_mode = layer.get_filter_mode();
-
-                                // Render ONLY Blend layers in second pass
-                                // Transparent is rendered in first pass with alpha testing
-                                if current_filter_mode == FilterMode::Blend {
-                                    render_geoset_layer(&mut render_pass, geoset, layer_idx);
-                                }
-                            }
-                        }
-                    }
+                // Draw skeleton on top (only if model is present)
+                if model_opt.is_some() && show_skeleton && self.num_skeleton_lines > 0 {
+                    render_pass.set_pipeline(&self.line_pipeline);
+                    render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, self.skeleton_vertex_buffer.slice(..));
+                    render_pass.draw(0..(self.num_skeleton_lines * 2), 0..1);
                 }
 
-                // PASS 3: Render additive materials (blend mode: ONE, ONE)
-                let additive_pipeline = if wireframe_mode {
-                    &self.wireframe_additive_pipeline
-                } else {
-                    &self.additive_pipeline
-                };
-                render_pass.set_pipeline(additive_pipeline);
-
-                for (geoset_idx, geoset) in self.geosets.iter().enumerate() {
-                    // Skip if geoset is hidden via UI
-                    if geoset_idx < show_geosets.len() && !show_geosets[geoset_idx] {
-                        continue;
-                    }
-
-                    if let Some(mat_id) = geoset.material_id {
-                        if mat_id < model.materials.len() {
-                            let material = &model.materials[mat_id];
-                            // Render ALL layers, not just first
-                            for (layer_idx, layer) in material.layers.iter().enumerate() {
-                                // Skip if layer is disabled in UI
-                                if !layer.is_enabled() {
-                                    continue;
-                                }
-
-                                // Get current filter mode (may be overridden by user)
-                                let current_filter_mode = layer.get_filter_mode();
-
-                                // Render additive layers in third pass
-                                if current_filter_mode == FilterMode::Additive
-                                    || current_filter_mode == FilterMode::AddAlpha
-                                {
-                                    render_geoset_layer(&mut render_pass, geoset, layer_idx);
-                                }
-                            }
-                        }
-                    }
+                // Draw bounding boxes (only if model is present)
+                if model_opt.is_some() && show_bounding_box && self.num_bounding_box_lines > 0 {
+                    render_pass.set_pipeline(&self.line_pipeline);
+                    render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, self.bounding_box_vertex_buffer.slice(..));
+                    render_pass.draw(0..(self.num_bounding_box_lines * 2), 0..1);
                 }
-            }
-
-            // Draw skeleton on top (always visible)
-            if show_skeleton && self.num_skeleton_lines > 0 {
-                render_pass.set_pipeline(&self.line_pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.skeleton_vertex_buffer.slice(..));
-                render_pass.draw(0..(self.num_skeleton_lines * 2), 0..1);
-            }
-
-            // Draw bounding boxes
-            if show_bounding_box && self.num_bounding_box_lines > 0 {
-                render_pass.set_pipeline(&self.line_pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.bounding_box_vertex_buffer.slice(..));
-                render_pass.draw(0..(self.num_bounding_box_lines * 2), 0..1);
             }
         }
 
         // Render egui properly
-        for (id, image_delta) in &_textures_delta.set {
+        for (id, image_delta) in &textures_delta.set {
             self.egui_renderer
                 .update_texture(&self.device, &self.queue, *id, image_delta);
         }
 
-        let screen_desc = _screen_descriptor;
+        let screen_desc = screen_descriptor;
 
         // Update egui buffers before rendering
         self.egui_renderer.update_buffers(
             &self.device,
             &self.queue,
             &mut encoder,
-            &_paint_jobs,
+            &paint_jobs,
             &screen_desc,
         );
 
@@ -551,10 +402,10 @@ impl Renderer {
                 .forget_lifetime(); // This is the key!
 
             self.egui_renderer
-                .render(&mut egui_rpass, &_paint_jobs, &screen_desc);
+                .render(&mut egui_rpass, &paint_jobs, &screen_desc);
         }
 
-        for id in &_textures_delta.free {
+        for id in &textures_delta.free {
             self.egui_renderer.free_texture(id);
         }
 

@@ -1,4 +1,6 @@
+use crate::error::MdlError;
 use std::sync::Arc;
+use tokio::runtime::Runtime;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -6,21 +8,21 @@ use winit::{
     window::{Window, WindowId},
 };
 
-mod app;
 mod animation;
+mod app;
 mod error;
 mod material;
 mod model;
+mod parser;
+mod renderer;
 mod settings;
 mod texture;
 mod ui;
-mod renderer;
-mod parser;
 
 struct AppHandler {
     app: Option<app::App>,
     model_path: Option<String>,
-    rt: tokio::runtime::Runtime,
+    runtime: Runtime,
 }
 
 impl ApplicationHandler for AppHandler {
@@ -31,12 +33,15 @@ impl ApplicationHandler for AppHandler {
                 .with_inner_size(winit::dpi::LogicalSize::new(1200.0, 800.0));
 
             let window = event_loop.create_window(window_attrs).unwrap();
-            let runtime_handle = self.rt.handle().clone();
-            let mut app = self.rt.block_on(app::App::new(Arc::new(window), runtime_handle)).unwrap();
+            let runtime_handle = self.runtime.handle().clone();
+            let mut app = self
+                .runtime
+                .block_on(app::App::new(Arc::new(window), runtime_handle))
+                .unwrap();
 
             // Load model if provided as command line argument
             if let Some(path) = &self.model_path {
-                if let Err(e) = self.rt.block_on(app.load_model(path)) {
+                if let Err(e) = self.runtime.block_on(app.load_model(path)) {
                     eprintln!("Failed to load model '{}': {}", path, e);
                 }
             }
@@ -65,12 +70,12 @@ impl ApplicationHandler for AppHandler {
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(app) = &mut self.app {
             // Check if there's a pending model to load
-            if let Some(path) = app.take_pending_model_path() {
-                if let Err(e) = self.rt.block_on(app.load_model(&path)) {
+            if let Some(path) = app.pending_model_path.take() {
+                if let Err(e) = self.runtime.block_on(app.load_model(&path)) {
                     eprintln!("Failed to load model '{}': {}", path, e);
                 }
             }
-            
+
             if let Err(e) = app.render() {
                 eprintln!("Render error: {:?}", e);
             }
@@ -79,9 +84,9 @@ impl ApplicationHandler for AppHandler {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), MdlError> {
     env_logger::init();
-    
+
     // Set up panic hook to show error dialog
     std::panic::set_hook(Box::new(|panic_info| {
         let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
@@ -91,21 +96,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             "Unknown panic".to_string()
         };
-        
+
         let location = if let Some(location) = panic_info.location() {
-            format!("\n\nLocation: {}:{}:{}", 
-                location.file(), 
-                location.line(), 
+            format!(
+                "\n\nLocation: {}:{}:{}",
+                location.file(),
+                location.line(),
                 location.column()
             )
         } else {
             String::new()
         };
-        
+
         let full_message = format!("MDLVis-RS crashed!\n\n{}{}", message, location);
-        
+
         eprintln!("{}", full_message);
-        
+
         // Show native error dialog
         #[cfg(not(target_os = "linux"))]
         {
@@ -116,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .set_level(rfd::MessageLevel::Error)
                 .show();
         }
-        
+
         #[cfg(target_os = "linux")]
         {
             eprintln!("\n{}\n", "=".repeat(80));
@@ -139,7 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut handler = AppHandler {
         app: None,
         model_path,
-        rt: tokio::runtime::Runtime::new()?,
+        runtime: Runtime::new()?,
     };
 
     event_loop.run_app(&mut handler)?;

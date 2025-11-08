@@ -1,56 +1,58 @@
+use crate::error::MdlError;
 use crate::material::MaterialUniform;
 use crate::model::{FilterMode, Model};
 use crate::renderer::camera::CameraState;
 use crate::renderer::geoset_render_info::GeosetRenderInfo;
 use crate::renderer::line_vertex::LineVertex;
 use crate::renderer::vertex::Vertex;
+use crate::settings::Settings;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 pub struct Renderer {
-    pub(crate) surface: wgpu::Surface<'static>,
-    pub(crate) device: wgpu::Device,
-    pub(crate) queue: wgpu::Queue,
-    pub(crate) config: wgpu::SurfaceConfiguration,
-    pub(crate) render_pipeline: wgpu::RenderPipeline,
-    pub(crate) wireframe_pipeline: wgpu::RenderPipeline,
-    pub(crate) transparent_pipeline: wgpu::RenderPipeline,
-    pub(crate) wireframe_transparent_pipeline: wgpu::RenderPipeline,
-    pub(crate) additive_pipeline: wgpu::RenderPipeline,
-    pub(crate) wireframe_additive_pipeline: wgpu::RenderPipeline,
-    pub(crate) line_pipeline: wgpu::RenderPipeline,
-    pub(crate) vertex_buffer: wgpu::Buffer,
-    pub(crate) index_buffer: wgpu::Buffer,
-    pub(crate) num_indices: u32,
-    pub(crate) geosets: Vec<GeosetRenderInfo>,
+    pub surface: wgpu::Surface<'static>,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub config: wgpu::SurfaceConfiguration,
+    pub render_pipeline: wgpu::RenderPipeline,
+    pub wireframe_pipeline: wgpu::RenderPipeline,
+    pub transparent_pipeline: wgpu::RenderPipeline,
+    pub wireframe_transparent_pipeline: wgpu::RenderPipeline,
+    pub additive_pipeline: wgpu::RenderPipeline,
+    pub wireframe_additive_pipeline: wgpu::RenderPipeline,
+    pub line_pipeline: wgpu::RenderPipeline,
+    pub vertex_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub num_indices: u32,
+    pub geosets: Vec<GeosetRenderInfo>,
     materials: Vec<crate::model::Material>,
-    pub(crate) textures: Vec<crate::model::Texture>,
-    pub(crate) line_vertex_buffer: wgpu::Buffer,
-    pub(crate) num_lines: u32,
-    pub(crate) skeleton_vertex_buffer: wgpu::Buffer,
-    pub(crate) num_skeleton_lines: u32,
-    pub(crate) bounding_box_vertex_buffer: wgpu::Buffer,
-    pub(crate) num_bounding_box_lines: u32,
-    pub(crate) camera_buffer: wgpu::Buffer,
-    pub(crate) camera_bind_group: wgpu::BindGroup,
-    pub(crate) texture_bind_groups: Vec<wgpu::BindGroup>, // One bind group per texture
-    texture_views: Vec<Option<wgpu::TextureView>>,        // Store texture views for egui
+    pub textures: Vec<crate::model::Texture>,
+    pub line_vertex_buffer: wgpu::Buffer,
+    pub num_lines: u32,
+    pub skeleton_vertex_buffer: wgpu::Buffer,
+    pub num_skeleton_lines: u32,
+    pub bounding_box_vertex_buffer: wgpu::Buffer,
+    pub num_bounding_box_lines: u32,
+    pub camera_buffer: wgpu::Buffer,
+    pub camera_bind_group: wgpu::BindGroup,
+    pub texture_bind_groups: Vec<wgpu::BindGroup>, // One bind group per texture
+    texture_views: Vec<Option<wgpu::TextureView>>, // Store texture views for egui
     texture_bind_group_layout: wgpu::BindGroupLayout,
     // Material uniform - single bind group for all materials
-    pub(crate) material_buffer: wgpu::Buffer,
-    pub(crate) material_bind_group: wgpu::BindGroup,
+    pub material_buffer: wgpu::Buffer,
+    pub material_bind_group: wgpu::BindGroup,
     // Store white texture components to create bind groups for missing textures
     white_texture_view: wgpu::TextureView,
     white_texture_sampler: wgpu::Sampler,
     pub team_color: [f32; 3],
     grid_major_color: [f32; 3],
     grid_minor_color: [f32; 3],
-    pub(crate) skybox_color: [f32; 3],
+    pub skybox_color: [f32; 3],
     pub camera: CameraState,
     model_center: [f32; 3],
-    pub(crate) egui_renderer: egui_wgpu::Renderer,
+    pub egui_renderer: egui_wgpu::Renderer,
     egui_ctx: egui::Context,
-    pub(crate) view_proj_matrix: nalgebra_glm::Mat4,
+    pub view_proj_matrix: nalgebra_glm::Mat4,
     // Store original vertices for animation
     original_vertices: Vec<Vertex>,
     // Store model for accessing vertex groups during animation
@@ -58,9 +60,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(
-        window: &Arc<winit::window::Window>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(window: &Arc<winit::window::Window>) -> Result<Self, MdlError> {
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
@@ -1095,122 +1095,6 @@ impl Renderer {
         self.generate_bounding_box_lines(model);
     }
 
-    /// Generate bounding box lines from all geosets
-    fn generate_bounding_box_lines(&mut self, model: &Model) {
-        let bbox_color = [1.0, 1.0, 0.0]; // Yellow for bounding box - will be updated from settings
-        self.generate_bounding_box_lines_with_color(model, bbox_color);
-    }
-
-    fn generate_bounding_box_lines_with_color(&mut self, model: &Model, bbox_color: [f32; 3]) {
-        let mut bbox_vertices = Vec::new();
-
-        // Calculate overall model bounding box
-        let mut overall_min = [f32::INFINITY, f32::INFINITY, f32::INFINITY];
-        let mut overall_max = [f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
-        let mut has_valid_bbox = false;
-
-        for geoset in &model.geosets {
-            let min = geoset.minimum_extent;
-            let max = geoset.maximum_extent;
-
-            // Skip if bounding box is invalid
-            if min[0] >= max[0] || min[1] >= max[1] || min[2] >= max[2] {
-                continue;
-            }
-
-            // Update overall bounds
-            for i in 0..3 {
-                overall_min[i] = overall_min[i].min(min[i]);
-                overall_max[i] = overall_max[i].max(max[i]);
-            }
-            has_valid_bbox = true;
-        }
-
-        if has_valid_bbox {
-            // Create wireframe cube for the overall model bounding box
-            let vertices = [
-                // Bottom face (Z = min[2])
-                [overall_min[0], overall_min[1], overall_min[2]], // 0: min corner
-                [overall_max[0], overall_min[1], overall_min[2]], // 1: +X
-                [overall_max[0], overall_max[1], overall_min[2]], // 2: +X+Y
-                [overall_min[0], overall_max[1], overall_min[2]], // 3: +Y
-                // Top face (Z = max[2])
-                [overall_min[0], overall_min[1], overall_max[2]], // 4: +Z
-                [overall_max[0], overall_min[1], overall_max[2]], // 5: +X+Z
-                [overall_max[0], overall_max[1], overall_max[2]], // 6: +X+Y+Z (max corner)
-                [overall_min[0], overall_max[1], overall_max[2]], // 7: +Y+Z
-            ];
-
-            // Bottom face edges
-            for i in 0..4 {
-                let next = (i + 1) % 4;
-                bbox_vertices.push(LineVertex {
-                    position: vertices[i],
-                    color: bbox_color,
-                });
-                bbox_vertices.push(LineVertex {
-                    position: vertices[next],
-                    color: bbox_color,
-                });
-            }
-
-            // Top face edges
-            for i in 4..8 {
-                let next = 4 + ((i - 4 + 1) % 4);
-                bbox_vertices.push(LineVertex {
-                    position: vertices[i],
-                    color: bbox_color,
-                });
-                bbox_vertices.push(LineVertex {
-                    position: vertices[next],
-                    color: bbox_color,
-                });
-            }
-
-            // Vertical edges connecting bottom to top
-            for i in 0..4 {
-                bbox_vertices.push(LineVertex {
-                    position: vertices[i],
-                    color: bbox_color,
-                });
-                bbox_vertices.push(LineVertex {
-                    position: vertices[i + 4],
-                    color: bbox_color,
-                });
-            }
-
-            let box_size = [
-                overall_max[0] - overall_min[0],
-                overall_max[1] - overall_min[1],
-                overall_max[2] - overall_min[2],
-            ];
-
-            println!(
-                "Model bounding box: min={:?}, max={:?}, size={:?}",
-                overall_min, overall_max, box_size
-            );
-        }
-
-        if !bbox_vertices.is_empty() {
-            self.bounding_box_vertex_buffer =
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Bounding Box Vertex Buffer"),
-                        contents: bytemuck::cast_slice(&bbox_vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-            self.num_bounding_box_lines = (bbox_vertices.len() / 2) as u32;
-            println!(
-                "Generated {} bounding box lines for overall model ({} geosets)",
-                self.num_bounding_box_lines,
-                model.geosets.len()
-            );
-        } else {
-            self.num_bounding_box_lines = 0;
-            println!("No valid bounding boxes found in geosets");
-        }
-    }
-
     /// Reset vertex buffer to original parsed vertices (no animation)
     pub fn reset_to_original_vertices(&mut self) {
         if self.original_vertices.is_empty() {
@@ -1346,7 +1230,7 @@ impl Renderer {
         );
     }
 
-    pub fn update_colors(&mut self, settings: &crate::settings::Settings, model: Option<&Model>) {
+    pub fn update_colors(&mut self, settings: &Settings, model: Option<&Model>) {
         // Update team color
         self.set_team_color(settings.colors.team_color);
 
@@ -1544,8 +1428,6 @@ impl Renderer {
         // Update the bind group and view for this texture ID
         self.texture_bind_groups[texture_id] = bind_group;
         self.texture_views[texture_id] = Some(texture_view);
-
-        println!("Loaded texture {} ({}x{})", texture_id, width, height);
     }
 
     /// Get egui TextureId for a loaded texture

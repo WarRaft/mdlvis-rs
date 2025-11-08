@@ -5,3 +5,4 @@ mod line_vertex;
 mod geoset_render_info;
 mod team_color;
 mod render;
+mod bounding_box;

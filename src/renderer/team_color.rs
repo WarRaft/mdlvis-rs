@@ -87,7 +87,6 @@ impl Renderer {
         }
 
         self.load_texture_from_rgba(&rgba_data, 32, 32, texture_id);
-        println!("Created team glow texture at index {}", texture_id);
     }
 
     pub fn set_team_color(&mut self, color: [f32; 3]) {

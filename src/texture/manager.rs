@@ -6,9 +6,7 @@ pub enum TextureStatus {
     LoadingLocal,
     LoadingRemote,
     Loaded,
-    ErrorLocal(String),
-    ErrorRemote(String),
-    NotFound,
+    Error(String),
 }
 
 #[derive(Debug, Clone)]
@@ -49,10 +47,7 @@ impl TextureInfo {
     }
 
     pub fn has_error(&self) -> bool {
-        matches!(
-            self.status,
-            TextureStatus::ErrorLocal(_) | TextureStatus::ErrorRemote(_) | TextureStatus::NotFound
-        )
+        matches!(self.status, TextureStatus::Error(_))
     }
 
     pub fn status_text(&self) -> String {
@@ -61,9 +56,7 @@ impl TextureInfo {
             TextureStatus::LoadingLocal => "Loading from disk...".to_string(),
             TextureStatus::LoadingRemote => "Downloading...".to_string(),
             TextureStatus::Loaded => format!("Loaded ({}x{})", self.width, self.height),
-            TextureStatus::ErrorLocal(err) => format!("Local error: {}", err),
-            TextureStatus::ErrorRemote(err) => format!("Download error: {}", err),
-            TextureStatus::NotFound => "Not found".to_string(),
+            TextureStatus::Error(err) => format!("Local error: {}", err),
         }
     }
 
@@ -72,9 +65,7 @@ impl TextureInfo {
             TextureStatus::NotLoaded => egui::Color32::GRAY,
             TextureStatus::LoadingLocal | TextureStatus::LoadingRemote => egui::Color32::YELLOW,
             TextureStatus::Loaded => egui::Color32::GREEN,
-            TextureStatus::ErrorLocal(_) | TextureStatus::ErrorRemote(_) | TextureStatus::NotFound => {
-                egui::Color32::RED
-            }
+            TextureStatus::Error(_) => egui::Color32::RED,
         }
     }
 }
@@ -98,17 +89,17 @@ impl TextureManager {
 
     pub fn init_from_model(&mut self, model: &crate::model::Model) {
         self.textures.clear();
-        
+
         for (id, texture) in model.textures.iter().enumerate() {
             let mut info = TextureInfo::new(id, texture.filename.clone(), texture.replaceable_id);
-            
+
             // Check if already loaded
             if texture.image_data.is_some() {
                 info.status = TextureStatus::Loaded;
                 info.width = texture.width;
                 info.height = texture.height;
             }
-            
+
             self.textures.push(info);
         }
     }
@@ -119,35 +110,35 @@ impl TextureManager {
         if let Some(model_dir) = &self.model_directory {
             // Normalize filename: lowercase, forward slashes
             let normalized = filename.to_lowercase().replace('\\', "/");
-            
+
             // Add .blp extension if not present
             let with_extension = if !normalized.ends_with(".blp") {
                 format!("{}.blp", normalized)
             } else {
                 normalized.clone()
             };
-            
+
             // Extract just the filename without path
             let filename_only = Path::new(&with_extension)
                 .file_name()
                 .and_then(|f| f.to_str())
                 .unwrap_or(&with_extension);
-            
+
             // Directories to search in
             let search_dirs = vec![
-                model_dir.clone(),                      // Model directory
-                model_dir.join("textures"),            // textures/ subdirectory
-                model_dir.join("Textures"),            
+                model_dir.clone(),          // Model directory
+                model_dir.join("textures"), // textures/ subdirectory
+                model_dir.join("Textures"),
                 model_dir.join("TEXTURES"),
-                model_dir.join(".."),                  // Parent directory
+                model_dir.join(".."), // Parent directory
             ];
-            
+
             // Search in each directory
             for search_dir in search_dirs {
                 if !search_dir.exists() {
                     continue;
                 }
-                
+
                 // Try to read directory
                 if let Ok(entries) = std::fs::read_dir(&search_dir) {
                     for entry in entries.flatten() {
@@ -159,7 +150,7 @@ impl TextureManager {
                         }
                     }
                 }
-                
+
                 // Also try direct path (in case of exact match)
                 let direct = search_dir.join(filename_only);
                 if direct.exists() {

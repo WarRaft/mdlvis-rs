@@ -1,14 +1,17 @@
+use crate::error::MdlError;
+use crate::model::Model;
+use crate::parser::load::load;
+use crate::renderer::camera::{CameraController, CameraState};
+use crate::renderer::renderer::Renderer;
+use crate::settings::Settings;
+use crate::texture::loader::load_texture;
+use crate::texture::manager::{TextureManager, TextureStatus};
+use crate::texture::panel::TexturePanel;
+use crate::ui::Ui;
 use std::fs::File;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use winit::window::Window;
-
-use crate::model::Model;
-use crate::parser::load::load;
-use crate::renderer::camera::CameraController;
-use crate::renderer::renderer::Renderer;
-use crate::texture::{TextureManager, TexturePanel};
-use crate::ui::Ui;
 
 pub enum TextureLoadResult {
     Success {
@@ -23,14 +26,19 @@ pub enum TextureLoadResult {
     },
 }
 
+pub struct EventResponse {
+    pub repaint: bool,
+    pub exit: bool,
+}
+
 pub struct App {
     pub window: Arc<Window>,
     ui: Ui,
     texture_panel: TexturePanel,
-    texture_manager: TextureManager,
+    pub(crate) texture_manager: TextureManager,
     model: Option<Model>,
     model_path: Option<String>,
-    pending_model_path: Option<String>, // Path to model that should be loaded
+    pub(crate) pending_model_path: Option<String>, // Path to model that should be loaded
     renderer: Renderer,
     camera_controller: CameraController,
     animation_system: crate::animation::AnimationSystem,
@@ -38,21 +46,16 @@ pub struct App {
     egui_state: egui_winit::State,
     egui_wants_pointer: bool, // Track if egui is using the pointer
     texture_receiver: mpsc::UnboundedReceiver<TextureLoadResult>,
-    texture_sender: mpsc::UnboundedSender<TextureLoadResult>,
-    runtime_handle: tokio::runtime::Handle,
-    settings: crate::settings::Settings,
-}
-
-pub struct EventResponse {
-    pub repaint: bool,
-    pub exit: bool,
+    pub(crate) texture_sender: mpsc::UnboundedSender<TextureLoadResult>,
+    pub(crate) runtime_handle: tokio::runtime::Handle,
+    settings: Settings,
 }
 
 impl App {
     pub async fn new(
         window: Arc<Window>,
         runtime_handle: tokio::runtime::Handle,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, MdlError> {
         // Initialize UI
         let ui = Ui::new();
 
@@ -80,10 +83,10 @@ impl App {
         let (texture_sender, texture_receiver) = mpsc::unbounded_channel();
 
         // Load settings
-        let settings = crate::settings::Settings::load();
+        let settings = Settings::load();
 
         // Create camera controller with default state
-        let camera_state = crate::renderer::camera::CameraState::default();
+        let camera_state = CameraState::default();
         let camera_controller = CameraController::new(camera_state);
 
         let mut app = Self {
@@ -244,20 +247,18 @@ impl App {
 
                     // Update texture manager status
                     if let Some(texture_info) = self.texture_manager.get_texture_mut(texture_id) {
-                        texture_info.status = crate::texture::TextureStatus::Loaded;
+                        texture_info.status = TextureStatus::Loaded;
                         texture_info.width = width;
                         texture_info.height = height;
                         texture_info.progress = 1.0;
                     }
                 }
                 TextureLoadResult::Error { texture_id, error } => {
-                    eprintln!("Texture {} failed to load: {}", texture_id, error);
-
                     // Update texture manager status to error ONLY if not already loaded
                     if let Some(texture_info) = self.texture_manager.get_texture_mut(texture_id) {
                         // Don't overwrite successful load with error from background task
                         if !texture_info.is_loaded() {
-                            texture_info.status = crate::texture::TextureStatus::ErrorLocal(error);
+                            texture_info.status = TextureStatus::Error(error);
                             texture_info.progress = 0.0;
                         } else {
                             println!(
@@ -305,7 +306,6 @@ impl App {
                 camera_yaw,
                 camera_pitch,
                 &mut self.settings,
-                &mut self.texture_panel,
                 &mut self.renderer,
             );
 
@@ -390,37 +390,21 @@ impl App {
         // Sync camera state to renderer
         self.renderer.camera = self.camera_controller.state().clone();
 
-        // Render with or without model
-        if let Some(model) = self.model.as_ref() {
-            self.renderer.render(
-                model,
-                show_skeleton,
-                show_grid,
-                show_bounding_box,
-                wireframe_mode,
-                far_plane,
-                current_frame,
-                &show_geosets,
-                paint_jobs,
-                full_output.textures_delta,
-                screen_descriptor,
-            )
-        } else {
-            // No model - just render empty scene with grid
-            self.renderer.render_empty(
-                show_grid,
-                paint_jobs,
-                full_output.textures_delta,
-                screen_descriptor,
-            )
-        }
+        self.renderer.render(
+            self.model.as_ref(),
+            show_skeleton,
+            show_grid,
+            show_bounding_box,
+            wireframe_mode,
+            far_plane,
+            &show_geosets,
+            paint_jobs,
+            full_output.textures_delta,
+            screen_descriptor,
+        )
     }
 
-    pub fn take_pending_model_path(&mut self) -> Option<String> {
-        self.pending_model_path.take()
-    }
-
-    pub async fn load_model(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn load_model(&mut self, path: &str) -> Result<(), MdlError> {
         println!("Loading model: {}", path);
 
         let mut file = File::open(path)?;
@@ -442,7 +426,7 @@ impl App {
                 self.renderer.create_team_color_texture(texture_id);
                 // Mark as loaded immediately
                 if let Some(info) = self.texture_manager.get_texture_mut(texture_id) {
-                    info.status = crate::texture::TextureStatus::Loaded;
+                    info.status = TextureStatus::Loaded;
                     info.width = 4;
                     info.height = 4;
                 }
@@ -452,7 +436,7 @@ impl App {
                 self.renderer.create_team_glow_texture(texture_id);
                 // Mark as loaded immediately
                 if let Some(info) = self.texture_manager.get_texture_mut(texture_id) {
-                    info.status = crate::texture::TextureStatus::Loaded;
+                    info.status = TextureStatus::Loaded;
                     info.width = 32;
                     info.height = 32;
                 }
@@ -534,7 +518,7 @@ impl App {
 
             // Spawn background task to download from internet
             tokio::spawn(async move {
-                match crate::texture::load_texture(&texture_path).await {
+                match load_texture(&texture_path).await {
                     Ok((rgba_data, width, height)) => {
                         let _ = sender.send(TextureLoadResult::Success {
                             texture_id,
@@ -568,68 +552,5 @@ impl App {
         println!("Model loaded successfully");
 
         Ok(())
-    }
-
-    fn start_texture_load(&mut self, texture_id: usize) {
-        if let Some(texture_info) = self.texture_manager.get_texture(texture_id) {
-            // Skip RID textures - they are generated, not loaded
-            if texture_info.replaceable_id > 0 {
-                println!(
-                    "Skipping texture {} - RID {} textures are generated, not loaded",
-                    texture_id, texture_info.replaceable_id
-                );
-                return;
-            }
-
-            let filename = texture_info.filename.clone();
-            let local_path = texture_info.local_path.clone();
-            let sender = self.texture_sender.clone();
-
-            // Update status to loading
-            if let Some(info) = self.texture_manager.get_texture_mut(texture_id) {
-                info.status = if local_path.is_some() {
-                    crate::texture::TextureStatus::LoadingLocal
-                } else {
-                    crate::texture::TextureStatus::LoadingRemote
-                };
-                info.progress = 0.0;
-            }
-
-            // Spawn background task using runtime handle
-            self.runtime_handle.spawn(async move {
-                println!("Loading texture {}: {}", texture_id, filename);
-
-                let result = if let Some(path) = local_path {
-                    // Try local first
-                    match crate::texture::load_from_file(&path).await {
-                        Ok(data) => crate::texture::decode_blp(&data),
-                        Err(local_err) => {
-                            println!("Local load failed ({}), trying remote", local_err);
-                            crate::texture::load_texture(&filename).await
-                        }
-                    }
-                } else {
-                    // Load from remote
-                    crate::texture::load_texture(&filename).await
-                };
-
-                match result {
-                    Ok((rgba_data, width, height)) => {
-                        let _ = sender.send(TextureLoadResult::Success {
-                            texture_id,
-                            rgba_data,
-                            width,
-                            height,
-                        });
-                    }
-                    Err(e) => {
-                        let _ = sender.send(TextureLoadResult::Error {
-                            texture_id,
-                            error: e.to_string(),
-                        });
-                    }
-                }
-            });
-        }
     }
 }
