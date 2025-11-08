@@ -1,8 +1,9 @@
 // Main animation system
 // Based on CalcAnimCoords from mdlDraw.pas (line 2310)
 
-use super::types::*;
 use super::skeleton::*;
+use super::types::*;
+use crate::model::model::Model;
 use nalgebra_glm as glm;
 
 /// Main animation system
@@ -89,7 +90,7 @@ impl AnimationSystem {
     /// Sets frame to 0 and recalculates all transformations
     pub fn reset_to_base_pose(&mut self) {
         self.current_frame = 0.0;
-        
+
         // Reset all "IsReady" flags
         for bone in &mut self.bones {
             bone.is_ready = false;
@@ -108,12 +109,7 @@ impl AnimationSystem {
             );
         }
         for i in 0..self.bones.len() {
-            interp_bone(
-                &mut self.bones[i],
-                0,
-                &self.controllers,
-                &self.pivot_points,
-            );
+            interp_bone(&mut self.bones[i], 0, &self.controllers, &self.pivot_points);
         }
 
         // Calculate absolute transformations
@@ -213,9 +209,9 @@ impl Default for AnimationSystem {
 impl AnimationSystem {
     /// Initialize animation system from model
     /// Parse bones, helpers, pivot points, and controllers from model data
-    pub fn init_from_model(&mut self, model: &crate::model::Model) {
+    pub fn init_from_model(&mut self, model: &Model) {
         use std::collections::HashMap;
-        
+
         // Clear existing data
         self.bones.clear();
         self.helpers.clear();
@@ -225,12 +221,12 @@ impl AnimationSystem {
         // Create ObjectID -> Index mapping
         // This is critical because parent_id is an ObjectID, not an array index
         let mut object_id_to_index: HashMap<i32, usize> = HashMap::new();
-        
+
         // Map bones: ObjectID -> index in bones array
         for (idx, bone) in model.bones.iter().enumerate() {
             object_id_to_index.insert(bone.object_id as i32, idx);
         }
-        
+
         // Map helpers: ObjectID -> index (offset by bones.len())
         for (idx, helper) in model.helpers.iter().enumerate() {
             object_id_to_index.insert(helper.object_id as i32, model.bones.len() + idx);
@@ -244,7 +240,7 @@ impl AnimationSystem {
                 bone.pivot_point[2],
             ));
         }
-        
+
         for helper in &model.helpers {
             self.pivot_points.push(glm::vec3(
                 helper.pivot_point[0],
@@ -262,13 +258,13 @@ impl AnimationSystem {
                 3 => ControllerType::Bezier,
                 _ => ControllerType::Linear,
             };
-            
+
             let mut controller = Controller {
                 cont_type,
                 global_seq_id: model_controller.global_seq_id,
                 items: Vec::new(),
             };
-            
+
             for kf in &model_controller.keyframes {
                 controller.items.push(ControllerItem {
                     frame: kf.frame,
@@ -277,14 +273,14 @@ impl AnimationSystem {
                     out_tan: kf.out_tan.clone(),
                 });
             }
-            
+
             self.controllers.push(controller);
         }
 
         // Create BoneState for each bone
         for bone in &model.bones {
             let mut bone_state = BoneState::new(bone.name.clone(), bone.object_id as i32);
-            
+
             // CRITICAL: Convert parent ObjectID to index
             bone_state.parent = if bone.parent_id >= 0 {
                 match object_id_to_index.get(&bone.parent_id) {
@@ -294,7 +290,7 @@ impl AnimationSystem {
             } else {
                 -1
             };
-            
+
             bone_state.translation_idx = bone.translation_idx;
             bone_state.rotation_idx = bone.rotation_idx;
             bone_state.scaling_idx = bone.scaling_idx;
@@ -305,7 +301,7 @@ impl AnimationSystem {
         // Create BoneState for each helper
         for helper in &model.helpers {
             let mut helper_state = BoneState::new(helper.name.clone(), helper.object_id as i32);
-            
+
             // CRITICAL: Convert parent ObjectID to index
             helper_state.parent = if helper.parent_id >= 0 {
                 match object_id_to_index.get(&helper.parent_id) {
@@ -315,15 +311,20 @@ impl AnimationSystem {
             } else {
                 -1
             };
-            
+
             helper_state.translation_idx = helper.translation_idx;
             helper_state.rotation_idx = helper.rotation_idx;
             helper_state.scaling_idx = helper.scaling_idx;
             helper_state.visibility_idx = helper.visibility_idx;
             self.helpers.push(helper_state);
         }
-        
-        println!("Animation system initialized: {} bones, {} helpers, {} pivot points, {} controllers", 
-            self.bones.len(), self.helpers.len(), self.pivot_points.len(), self.controllers.len());
+
+        println!(
+            "Animation system initialized: {} bones, {} helpers, {} pivot points, {} controllers",
+            self.bones.len(),
+            self.helpers.len(),
+            self.pivot_points.len(),
+            self.controllers.len()
+        );
     }
 }

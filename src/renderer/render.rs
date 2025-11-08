@@ -1,5 +1,5 @@
-use crate::material::{FilterMode, MaterialUniform};
-use crate::model::Model;
+use crate::material::{FilterMode, MaterialUniform, ShadingFlags};
+use crate::model::model::Model;
 use crate::renderer::geoset_render_info::GeosetRenderInfo;
 use crate::renderer::renderer::Renderer;
 use egui_wgpu::ScreenDescriptor;
@@ -78,7 +78,7 @@ impl Renderer {
                                     let filter_mode = layer.get_filter_mode();
                                     // Use layer methods to get effective values (with overrides)
                                     let flags = layer.get_shading_flags();
-                                    let shading_bits = crate::model::ShadingFlags::get_bits(&flags);
+                                    let shading_bits = ShadingFlags::get_bits(&flags);
                                     let alpha = layer.get_alpha();
 
                                     (filter_mode, rid, alpha, shading_bits)

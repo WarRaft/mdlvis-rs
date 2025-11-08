@@ -1,6 +1,7 @@
 use crate::error::MdlError;
-use crate::material::MaterialUniform;
-use crate::model::{FilterMode, Model};
+use crate::material::{FilterMode, Material, MaterialUniform};
+use crate::model::model::Model;
+use crate::model::texture::Texture;
 use crate::renderer::camera::CameraState;
 use crate::renderer::geoset_render_info::GeosetRenderInfo;
 use crate::renderer::line_vertex::LineVertex;
@@ -25,8 +26,8 @@ pub struct Renderer {
     pub index_buffer: wgpu::Buffer,
     pub num_indices: u32,
     pub geosets: Vec<GeosetRenderInfo>,
-    materials: Vec<crate::model::Material>,
-    pub textures: Vec<crate::model::Texture>,
+    materials: Vec<Material>,
+    pub textures: Vec<Texture>,
     pub line_vertex_buffer: wgpu::Buffer,
     pub num_lines: u32,
     pub skeleton_vertex_buffer: wgpu::Buffer,

@@ -8,12 +8,12 @@ use nalgebra_glm as glm;
 pub fn quaternion_to_matrix(q: &glm::Quat) -> glm::Mat3 {
     // Normalize quaternion
     let q = glm::quat_normalize(q);
-    
+
     // Delphi code uses x2 = x+x instead of x*2
     let x2 = q.i + q.i;
     let y2 = q.j + q.j;
     let z2 = q.k + q.k;
-    
+
     let xx = q.i * x2;
     let xy = q.i * y2;
     let xz = q.i * z2;
@@ -30,11 +30,17 @@ pub fn quaternion_to_matrix(q: &glm::Quat) -> glm::Mat3 {
     // m[0,2]:=xz-wy;       m[1,2]:=yz+wx;       m[2,2]:=1.0-(xx+yy);
     // Delphi uses row-major [row,col], but glm::mat3 is column-major
     // So we need to transpose the matrix (swap rows and columns)
-    
+
     glm::mat3(
-        1.0 - (yy + zz), xy - wz,         xz + wy,         // column 0 (was row 0)
-        xy + wz,         1.0 - (xx + zz), yz - wx,         // column 1 (was row 1)
-        xz - wy,         yz + wx,         1.0 - (xx + yy), // column 2 (was row 2)
+        1.0 - (yy + zz),
+        xy - wz,
+        xz + wy, // column 0 (was row 0)
+        xy + wz,
+        1.0 - (xx + zz),
+        yz - wx, // column 1 (was row 1)
+        xz - wy,
+        yz + wx,
+        1.0 - (xx + yy), // column 2 (was row 2)
     )
 }
 
@@ -51,11 +57,9 @@ pub fn apply_scaling_to_matrix(matrix: &glm::Mat3, scaling: &glm::Vec3) -> glm::
         matrix[(0, 0)] * scaling.x,
         matrix[(1, 0)] * scaling.x,
         matrix[(2, 0)] * scaling.x,
-        
         matrix[(0, 1)] * scaling.y,
         matrix[(1, 1)] * scaling.y,
         matrix[(2, 1)] * scaling.y,
-        
         matrix[(0, 2)] * scaling.z,
         matrix[(1, 2)] * scaling.z,
         matrix[(2, 2)] * scaling.z,
@@ -63,16 +67,19 @@ pub fn apply_scaling_to_matrix(matrix: &glm::Mat3, scaling: &glm::Vec3) -> glm::
 }
 
 /// SLERP (Spherical Linear Interpolation) for quaternions
+#[allow(dead_code)]
 pub fn quat_slerp(q1: &glm::Quat, q2: &glm::Quat, t: f32) -> glm::Quat {
     glm::quat_slerp(q1, q2, t)
 }
 
 /// Linear interpolation for vectors
+#[allow(dead_code)]
 pub fn lerp_vec3(v1: &glm::Vec3, v2: &glm::Vec3, t: f32) -> glm::Vec3 {
     glm::lerp(v1, v2, t)
 }
 
 /// Linear interpolation for scalars
+#[allow(dead_code)]
 pub fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }

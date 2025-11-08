@@ -1,5 +1,4 @@
 use crate::error::MdlError;
-use crate::model::Model;
 use crate::parser::load::load;
 use crate::renderer::camera::{CameraController, CameraState};
 use crate::renderer::renderer::Renderer;
@@ -12,6 +11,7 @@ use std::fs::File;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use winit::window::Window;
+use crate::model::model::Model;
 
 pub enum TextureLoadResult {
     Success {

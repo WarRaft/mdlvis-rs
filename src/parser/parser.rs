@@ -1,5 +1,9 @@
 use crate::error::MdlError;
-use crate::model::{Bone, Model, Sequence};
+use crate::material::{FilterMode, Layer, Material, ShadingFlags};
+use crate::model::animation::Sequence;
+use crate::model::model::Model;
+use crate::model::skeleton::{AnimationController, Bone, Helper, Keyframe};
+use crate::model::texture::Texture;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -87,7 +91,7 @@ pub(crate) fn read_textures(file: &mut File, model: &mut Model, size: u32) -> Re
             tex_filename, replaceable_id
         );
 
-        model.textures.push(crate::model::Texture {
+        model.textures.push(Texture {
             filename: tex_filename,
             replaceable_id,
             image_data: None, // Will be loaded later if needed
@@ -165,7 +169,7 @@ fn read_controller(
             (Vec::new(), Vec::new())
         };
 
-        keyframes.push(crate::model::Keyframe {
+        keyframes.push(Keyframe {
             frame,
             data,
             in_tan,
@@ -173,7 +177,7 @@ fn read_controller(
         });
     }
 
-    model.controllers.push(crate::model::AnimationController {
+    model.controllers.push(AnimationController {
         interpolation_type,
         global_seq_id,
         keyframes,
@@ -268,8 +272,6 @@ pub(crate) fn read_bones(file: &mut File, model: &mut Model, size: u32) -> Resul
 }
 
 pub(crate) fn read_helpers(file: &mut File, model: &mut Model, size: u32) -> Result<(), MdlError> {
-    use crate::model::Helper;
-
     let start_pos = file.stream_position()?;
     let end_pos = start_pos + size as u64;
 
@@ -353,7 +355,7 @@ pub(crate) fn read_materials(
         }
 
         let layers_count = file.read_u32::<LittleEndian>()?;
-        let mut material = crate::model::Material::default();
+        let mut material = Material::default();
 
         // Read each layer
         for _ in 0..layers_count {
@@ -370,12 +372,12 @@ pub(crate) fn read_materials(
             let alpha = file.read_f32::<LittleEndian>()?;
 
             // Parse filter mode using FilterMode::from_u32
-            let filter_mode = crate::model::FilterMode::from_u32(filter_mode_val);
+            let filter_mode = FilterMode::from_u32(filter_mode_val);
 
             // Parse shading flags once during loading
-            let shading_flags = crate::model::ShadingFlags::from_bits(shading_flags_bits);
+            let shading_flags = ShadingFlags::from_bits(shading_flags_bits);
 
-            let layer = crate::model::Layer {
+            let layer = Layer {
                 texture_id: Some(texture_id as usize),
                 filter_mode,
                 shading_flags,

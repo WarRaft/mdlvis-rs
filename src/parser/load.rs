@@ -1,9 +1,9 @@
-use crate::model::Model;
+use crate::error::MdlError;
+use crate::model::model::Model;
+use crate::parser::geoset::geoset_parse;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use crate::error::MdlError;
-use crate::parser::geoset::geoset_parse;
 
 pub fn load(file: &mut File) -> Result<Model, MdlError> {
     let mut model = Model::default();

@@ -1,5 +1,6 @@
 use crate::error::MdlError;
-use crate::model::{Geoset, Model, Normal, Vertex};
+use crate::model::geoset::{Face, Geoset, Normal, TexCoord, Vertex};
+use crate::model::model::Model;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -50,9 +51,7 @@ pub fn geoset_parse(file: &mut File, model: &mut Model, geos_size: u32) -> Resul
                         let x = file.read_f32::<LittleEndian>()?;
                         let y = file.read_f32::<LittleEndian>()?;
                         let z = file.read_f32::<LittleEndian>()?;
-                        geoset
-                            .normals
-                            .push(Normal { normal: [x, y, z] });
+                        geoset.normals.push(Normal { normal: [x, y, z] });
                     }
                 }
                 b"PTYP" => {
@@ -99,7 +98,10 @@ pub fn geoset_parse(file: &mut File, model: &mut Model, geos_size: u32) -> Resul
                     let mut idx = 0;
                     let expected: usize = geoset.matrix_groups.iter().map(|g| g.capacity()).sum();
                     if expected != total_count {
-                        eprintln!("[mdlvis-rs] MATS count mismatch: total_count={}, sum(capacity)={}", total_count, expected);
+                        eprintln!(
+                            "[mdlvis-rs] MATS count mismatch: total_count={}, sum(capacity)={}",
+                            total_count, expected
+                        );
                     }
                     for group in &mut geoset.matrix_groups {
                         let cap = group.capacity();
@@ -150,9 +152,7 @@ pub fn geoset_parse(file: &mut File, model: &mut Model, geos_size: u32) -> Resul
                             for _ in 0..uvbs_count {
                                 let u = file.read_f32::<LittleEndian>()?;
                                 let v = file.read_f32::<LittleEndian>()?;
-                                geoset
-                                    .tex_coords
-                                    .push(crate::model::TexCoord { uv: [u, v] });
+                                geoset.tex_coords.push(TexCoord { uv: [u, v] });
                             }
                         }
 
@@ -178,7 +178,7 @@ pub fn geoset_parse(file: &mut File, model: &mut Model, geos_size: u32) -> Resul
         // Group indices into triangles
         for chunk in indices.chunks(3) {
             if chunk.len() == 3 {
-                geoset.faces.push(crate::model::Face {
+                geoset.faces.push(Face {
                     vertices: [chunk[0], chunk[1], chunk[2]],
                 });
             }

@@ -1,3 +1,4 @@
+use crate::model::model::Model;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -87,7 +88,7 @@ impl TextureManager {
         self.model_directory = model_path.parent().map(|p| p.to_path_buf());
     }
 
-    pub fn init_from_model(&mut self, model: &crate::model::Model) {
+    pub fn init_from_model(&mut self, model: &Model) {
         self.textures.clear();
 
         for (id, texture) in model.textures.iter().enumerate() {

@@ -1,16 +1,19 @@
-use wgpu::util::DeviceExt;
-use crate::model::Model;
+use crate::model::model::Model;
 use crate::renderer::line_vertex::LineVertex;
 use crate::renderer::renderer::Renderer;
+use wgpu::util::DeviceExt;
 
 impl Renderer {
-
     pub(crate) fn generate_bounding_box_lines(&mut self, model: &Model) {
         let bbox_color = [1.0, 1.0, 0.0]; // Yellow for bounding box - will be updated from settings
         self.generate_bounding_box_lines_with_color(model, bbox_color);
     }
 
-    pub(crate) fn generate_bounding_box_lines_with_color(&mut self, model: &Model, bbox_color: [f32; 3]) {
+    pub(crate) fn generate_bounding_box_lines_with_color(
+        &mut self,
+        model: &Model,
+        bbox_color: [f32; 3],
+    ) {
         let mut bbox_vertices = Vec::new();
 
         // Calculate overall model bounding box
