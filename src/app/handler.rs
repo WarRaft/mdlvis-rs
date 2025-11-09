@@ -1,10 +1,12 @@
+use crate::app::app::App;
+use crate::app::handler_registry;
+use std::ffi::c_void;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
-use crate::app::app::App;
 
 pub struct AppHandler {
     pub app: Option<App>,
@@ -14,6 +16,10 @@ pub struct AppHandler {
 
 impl ApplicationHandler for AppHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // Register global raw pointer to this handler for temporary access from `App`.
+        // WARNING: unsafe. Ensure unregister() is called (Drop below) when handler is gone.
+        handler_registry::register(self as *mut _ as *mut c_void);
+
         if self.app.is_none() {
             let window_attrs = Window::default_attributes()
                 .with_title("MDLVis-RS - Warcraft 3 Model Viewer")
@@ -68,5 +74,12 @@ impl ApplicationHandler for AppHandler {
             }
             app.window.request_redraw();
         }
+    }
+}
+
+impl Drop for AppHandler {
+    fn drop(&mut self) {
+        // Unregister global pointer on drop to avoid dangling pointer usage.
+        handler_registry::unregister();
     }
 }

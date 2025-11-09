@@ -15,6 +15,16 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use winit::window::Window;
 
+/// Temporary helper to access the global AppHandler registered in `handler_registry`.
+/// Unsafe: returns a mutable reference from a raw pointer. Use only in quick refactor.
+pub fn get_global_handler_mut() -> Option<&'static mut crate::app::handler::AppHandler> {
+    if let Some(raw) = crate::app::handler_registry::get_raw() {
+        unsafe { Some(&mut *(raw as *mut crate::app::handler::AppHandler)) }
+    } else {
+        None
+    }
+}
+
 pub struct EventResponse {
     pub repaint: bool,
     pub exit: bool,
