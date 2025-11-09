@@ -4,7 +4,6 @@ use crate::renderer::renderer::Renderer;
 use crate::texture::loader::{TextureLoadResult, load_texture};
 use crate::texture::manager::TextureStatus;
 use egui_wgpu::ScreenDescriptor;
-use egui_winit::State;
 use std::fs::File;
 
 /// Temporary helper to access the global AppHandler registered in `handler_registry`.
@@ -23,7 +22,6 @@ pub struct EventResponse {
 }
 
 pub struct App {
-    egui_state: State,
     renderer: Renderer,
 }
 
@@ -35,25 +33,7 @@ impl App {
 
         let renderer = Renderer::new(&window).await?;
 
-        let egui_ctx = renderer.egui_context();
-
-        egui_ctx.options_mut(|options| {
-            options.max_passes = std::num::NonZero::new(2).unwrap();
-        });
-
-        let egui_state = State::new(
-            egui_ctx.clone(),
-            egui::viewport::ViewportId::ROOT,
-            &window,
-            None,
-            None,
-            None,
-        );
-
-        let mut app = Self {
-            renderer,
-            egui_state,
-        };
+        let mut app = Self { renderer };
 
         // Initialize renderer colors from loaded settings
         app.renderer.update_colors(&handler.settings, None);
@@ -65,8 +45,9 @@ impl App {
         let handler = get_global_handler_mut().unwrap();
         let window = handler.window.as_ref().unwrap();
 
-        // Let egui handle the event first
-        let egui_response = self.egui_state.on_window_event(&window, event);
+        let egui_state = &mut handler.egui_state.as_mut().unwrap();
+
+        let egui_response = egui_state.on_window_event(&window, event);
 
         // For keyboard and some events, if egui consumed it, don't process further
         let egui_wants_input = egui_response.consumed;
@@ -228,11 +209,11 @@ impl App {
             }
         }
 
-        let handler = get_global_handler_mut().unwrap();
         let window = handler.window.as_ref().unwrap();
 
-        let raw_input = self.egui_state.take_egui_input(&window);
-        let egui_ctx = self.renderer.egui_context();
+        let egui_state = handler.egui_state.as_mut().unwrap();
+        let raw_input = egui_state.take_egui_input(&window);
+        let egui_ctx = egui_state.egui_ctx().clone();
 
         // Get camera orientation for axis gizmo
         let (camera_yaw, camera_pitch) = self.renderer.camera.get_orientation();
@@ -318,8 +299,7 @@ impl App {
                 .update_colors(&handler.settings, handler.model.as_ref());
         }
 
-        self.egui_state
-            .handle_platform_output(&window, full_output.platform_output);
+        egui_state.handle_platform_output(&window, full_output.platform_output);
 
         let paint_jobs = egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
 

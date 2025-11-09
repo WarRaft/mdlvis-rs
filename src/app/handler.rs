@@ -7,6 +7,7 @@ use crate::texture::loader::TextureLoadResult;
 use crate::texture::manager::TextureManager;
 use crate::texture::panel::TexturePanel;
 use crate::ui::Ui;
+use egui_winit::State;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use winit::application::ApplicationHandler;
@@ -31,6 +32,7 @@ pub struct AppHandler {
     pub texture_panel: TexturePanel,
     pub texture_manager: TextureManager,
     pub settings: Settings,
+    pub egui_state: Option<State>,
 }
 
 impl ApplicationHandler for AppHandler {
@@ -45,18 +47,24 @@ impl ApplicationHandler for AppHandler {
                     )
                     .unwrap(),
             );
+
+            let egui_ctx = egui::Context::default();
+            egui_ctx.options_mut(|options| {
+                options.max_passes = std::num::NonZero::new(2).unwrap();
+            });
+
+            self.egui_state = Some(State::new(
+                egui_ctx,
+                egui::viewport::ViewportId::ROOT,
+                &self.window.as_ref().unwrap(),
+                None,
+                None,
+                None,
+            ));
         }
 
         if self.app.is_none() {
-            let mut app = self.runtime.block_on(App::new()).unwrap();
-
-            // Load model if provided as command line argument
-            if let Some(path) = &self.model_path {
-                if let Err(e) = self.runtime.block_on(app.load_model(path)) {
-                    eprintln!("Failed to load model '{}': {}", path, e);
-                }
-            }
-
+            let app = self.runtime.block_on(App::new()).unwrap();
             self.app = Some(app);
         }
     }

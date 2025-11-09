@@ -52,7 +52,6 @@ pub struct Renderer {
     pub camera: CameraState,
     model_center: [f32; 3],
     pub egui_renderer: egui_wgpu::Renderer,
-    egui_ctx: egui::Context,
     pub view_proj_matrix: nalgebra_glm::Mat4,
     // Store original vertices for animation
     original_vertices: Vec<Vertex>,
@@ -810,7 +809,6 @@ impl Renderer {
         });
 
         // Initialize egui
-        let egui_ctx = egui::Context::default();
         let egui_renderer = egui_wgpu::Renderer::new(&device, config.format, Default::default());
 
         Ok(Self {
@@ -858,7 +856,6 @@ impl Renderer {
             ),
             model_center: [0.0, 0.0, 0.0],
             egui_renderer,
-            egui_ctx,
             view_proj_matrix: nalgebra_glm::Mat4::identity(),
             original_vertices: Vec::new(),
             model: None,
@@ -872,11 +869,7 @@ impl Renderer {
             self.surface.configure(&self.device, &self.config);
         }
     }
-
-    pub fn egui_context(&self) -> egui::Context {
-        self.egui_ctx.clone()
-    }
-
+    
     pub fn update_model(&mut self, model: &Model) {
         if model.geosets.is_empty() {
             return;
