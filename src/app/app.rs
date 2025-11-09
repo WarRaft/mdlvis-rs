@@ -1,12 +1,8 @@
 use crate::error::MdlError;
 use crate::parser::load::load;
-use crate::renderer::camera::{CameraController, CameraState};
 use crate::renderer::renderer::Renderer;
-use crate::settings::Settings;
 use crate::texture::loader::{TextureLoadResult, load_texture};
-use crate::texture::manager::{TextureManager, TextureStatus};
-use crate::texture::panel::TexturePanel;
-use crate::ui::Ui;
+use crate::texture::manager::TextureStatus;
 use egui_wgpu::ScreenDescriptor;
 use egui_winit::State;
 use std::fs::File;
@@ -27,33 +23,20 @@ pub struct EventResponse {
 }
 
 pub struct App {
-    ui: Ui,
-    renderer: Renderer,
-    camera_controller: CameraController,
-    animation_system: crate::animation::AnimationSystem,
     egui_state: State,
-    egui_wants_pointer: bool,
-    texture_panel: TexturePanel,
-    pub texture_manager: TextureManager,
-    settings: Settings,
+    renderer: Renderer,
 }
 
 impl App {
     pub async fn new() -> Result<Self, MdlError> {
-        // Initialize UI
-        let ui = Ui::new();
-
         let handler = get_global_handler_mut().unwrap();
 
         let window = handler.window.as_ref().unwrap();
 
-        // Initialize renderer
         let renderer = Renderer::new(&window).await?;
 
-        // Initialize egui_winit state
         let egui_ctx = renderer.egui_context();
 
-        // Enable egui persistence for collapsing headers, windows, etc.
         egui_ctx.options_mut(|options| {
             options.max_passes = std::num::NonZero::new(2).unwrap();
         });
@@ -67,27 +50,13 @@ impl App {
             None,
         );
 
-        // Load settings
-        let settings = Settings::load();
-
-        // Create camera controller with default state
-        let camera_state = CameraState::default();
-        let camera_controller = CameraController::new(camera_state);
-
         let mut app = Self {
-            ui,
-            texture_panel: TexturePanel::new(),
-            texture_manager: TextureManager::new(),
             renderer,
-            camera_controller,
-            animation_system: crate::animation::AnimationSystem::new(),
             egui_state,
-            egui_wants_pointer: false,
-            settings,
         };
 
         // Initialize renderer colors from loaded settings
-        app.renderer.update_colors(&app.settings, None);
+        app.renderer.update_colors(&handler.settings, None);
 
         Ok(app)
     }
@@ -131,36 +100,39 @@ impl App {
             }
             winit::event::WindowEvent::MouseInput { state, button, .. } => {
                 // Don't handle mouse input if egui wants the pointer
-                if self.egui_wants_pointer {
+                if handler.egui_wants_pointer {
                     return EventResponse {
                         repaint: egui_response.repaint,
                         exit: false,
                     };
                 }
                 let is_pressed = *state == winit::event::ElementState::Pressed;
-                self.camera_controller.on_mouse_button(*button, is_pressed);
+                handler
+                    .camera_controller
+                    .on_mouse_button(*button, is_pressed);
             }
             winit::event::WindowEvent::ModifiersChanged(modifiers) => {
                 let shift = modifiers.state().shift_key();
                 let alt = modifiers.state().alt_key();
                 let control = modifiers.state().control_key();
-                self.camera_controller.on_modifiers(shift, alt, control);
+                handler.camera_controller.on_modifiers(shift, alt, control);
             }
             winit::event::WindowEvent::CursorMoved { position, .. } => {
                 // Don't handle mouse movement if egui wants the pointer
-                if self.egui_wants_pointer {
+                if handler.egui_wants_pointer {
                     return EventResponse {
                         repaint: egui_response.repaint,
                         exit: false,
                     };
                 }
                 handler.current_cursor_pos = Some((position.x, position.y));
-                self.camera_controller
+                handler
+                    .camera_controller
                     .on_mouse_move((position.x, position.y));
             }
             winit::event::WindowEvent::MouseWheel { delta, .. } => {
                 // Don't handle mouse wheel if egui wants the pointer
-                if self.egui_wants_pointer {
+                if handler.egui_wants_pointer {
                     return EventResponse {
                         repaint: egui_response.repaint,
                         exit: false,
@@ -169,13 +141,13 @@ impl App {
                 match delta {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => {
                         // Real mouse wheel - simple zoom
-                        self.camera_controller.simple_zoom(*y);
+                        handler.camera_controller.simple_zoom(*y);
                     }
                     winit::event::MouseScrollDelta::PixelDelta(pos) => {
                         // Trackpad scroll (two fingers) - handle like PanGesture
-                        let control = self.camera_controller.is_control_pressed();
-                        let shift = self.camera_controller.is_shift_pressed();
-                        self.camera_controller.on_pan_gesture(
+                        let control = handler.camera_controller.is_control_pressed();
+                        let shift = handler.camera_controller.is_shift_pressed();
+                        handler.camera_controller.on_pan_gesture(
                             pos.x as f32 * 0.05,
                             -pos.y as f32 * 0.05,
                             control,
@@ -186,7 +158,7 @@ impl App {
             }
             winit::event::WindowEvent::PanGesture { delta, phase, .. } => {
                 // Don't handle pan gesture if egui wants the pointer
-                if self.egui_wants_pointer {
+                if handler.egui_wants_pointer {
                     return EventResponse {
                         repaint: egui_response.repaint,
                         exit: false,
@@ -198,9 +170,10 @@ impl App {
                 // - Control: zoom (change distance)
                 use winit::event::TouchPhase;
                 if matches!(phase, TouchPhase::Moved) {
-                    let control = self.camera_controller.is_control_pressed();
-                    let shift = self.camera_controller.is_shift_pressed();
-                    self.camera_controller
+                    let control = handler.camera_controller.is_control_pressed();
+                    let shift = handler.camera_controller.is_shift_pressed();
+                    handler
+                        .camera_controller
                         .on_pan_gesture(delta.x, -delta.y, control, shift);
                 }
             }
@@ -228,7 +201,8 @@ impl App {
                         .load_texture_from_rgba(&rgba_data, width, height, texture_id);
 
                     // Update texture manager status
-                    if let Some(texture_info) = self.texture_manager.get_texture_mut(texture_id) {
+                    if let Some(texture_info) = handler.texture_manager.get_texture_mut(texture_id)
+                    {
                         texture_info.status = TextureStatus::Loaded;
                         texture_info.width = width;
                         texture_info.height = height;
@@ -237,7 +211,8 @@ impl App {
                 }
                 TextureLoadResult::Error { texture_id, error } => {
                     // Update texture manager status to error ONLY if not already loaded
-                    if let Some(texture_info) = self.texture_manager.get_texture_mut(texture_id) {
+                    if let Some(texture_info) = handler.texture_manager.get_texture_mut(texture_id)
+                    {
                         // Don't overwrite successful load with error from background task
                         if !texture_info.is_loaded() {
                             texture_info.status = TextureStatus::Error(error);
@@ -267,7 +242,7 @@ impl App {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs_f64();
-        self.ui.animate(&handler.model, current_time);
+        handler.ui.animate(&handler.model, current_time);
 
         let mut reset_camera = false;
         let mut current_frame = 0.0;
@@ -285,12 +260,12 @@ impl App {
                 colors_changed_ui,
                 open_model_ui,
                 use_animation_ui,
-            ) = self.ui.show(
+            ) = handler.ui.show(
                 ctx,
                 &mut handler.model,
                 camera_yaw,
                 camera_pitch,
-                &mut self.settings,
+                &mut handler.settings,
                 &mut self.renderer,
             );
 
@@ -302,18 +277,18 @@ impl App {
             use_animation = use_animation_ui;
 
             // Show texture panel
-            if let Some(requests) = self.texture_panel.show(
+            if let Some(requests) = handler.texture_panel.show(
                 ctx,
-                &self.texture_manager,
+                &handler.texture_manager,
                 &mut self.renderer,
-                &mut self.settings.ui.show_texture_panel,
+                &mut handler.settings.ui.show_texture_panel,
             ) {
                 texture_load_requests = requests;
             }
         });
 
         // Update egui pointer state for next frame
-        self.egui_wants_pointer = egui_ctx.wants_pointer_input();
+        handler.egui_wants_pointer = egui_ctx.wants_pointer_input();
 
         // Process texture load requests
         for texture_id in texture_load_requests {
@@ -334,13 +309,13 @@ impl App {
 
         // Handle reset camera button
         if reset_camera {
-            self.camera_controller.reset();
+            handler.camera_controller.reset();
         }
 
         // Update renderer colors if they changed
         if colors_changed {
             self.renderer
-                .update_colors(&self.settings, handler.model.as_ref());
+                .update_colors(&handler.settings, handler.model.as_ref());
         }
 
         self.egui_state
@@ -353,23 +328,23 @@ impl App {
             pixels_per_point: window.scale_factor() as f32,
         };
 
-        let show_skeleton = self.settings.display.show_skeleton;
-        let show_grid = self.settings.display.show_grid;
-        let show_bounding_box = self.settings.display.show_bounding_box;
-        let wireframe_mode = self.settings.display.wireframe_mode;
-        let far_plane = self.settings.display.far_plane;
+        let show_skeleton = handler.settings.display.show_skeleton;
+        let show_grid = handler.settings.display.show_grid;
+        let show_bounding_box = handler.settings.display.show_bounding_box;
+        let wireframe_mode = handler.settings.display.wireframe_mode;
+        let far_plane = handler.settings.display.far_plane;
 
         // Update animation ONLY if use_animation flag is enabled
-        if use_animation && handler.model.is_some() && !self.animation_system.bones.is_empty() {
-            self.animation_system.update(current_frame);
-            self.renderer.update_animation(&self.animation_system);
+        if use_animation && handler.model.is_some() && !handler.animation_system.bones.is_empty() {
+            handler.animation_system.update(current_frame);
+            self.renderer.update_animation(&handler.animation_system);
         } else {
             // Reset to original parsed vertices (no animation)
             self.renderer.reset_to_original_vertices();
         }
 
         // Sync camera state to renderer
-        self.renderer.camera = self.camera_controller.state().clone();
+        self.renderer.camera = handler.camera_controller.state().clone();
 
         self.renderer.render(
             handler.model.as_ref(),
@@ -396,9 +371,10 @@ impl App {
 
         // Initialize texture manager with model path and textures
         handler.model_path = Some(path.to_string());
-        self.texture_manager
+        handler
+            .texture_manager
             .set_model_path(std::path::Path::new(path));
-        self.texture_manager.init_from_model(&model);
+        handler.texture_manager.init_from_model(&model);
         self.renderer.update_model(&model);
 
         // First, create RID textures (they are generated, not loaded)
@@ -408,7 +384,7 @@ impl App {
                 println!("Creating team color texture for texture {}", texture_id);
                 self.renderer.create_team_color_texture(texture_id);
                 // Mark as loaded immediately
-                if let Some(info) = self.texture_manager.get_texture_mut(texture_id) {
+                if let Some(info) = handler.texture_manager.get_texture_mut(texture_id) {
                     info.status = TextureStatus::Loaded;
                     info.width = 4;
                     info.height = 4;
@@ -418,7 +394,7 @@ impl App {
                 println!("Creating team glow texture for texture {}", texture_id);
                 self.renderer.create_team_glow_texture(texture_id);
                 // Mark as loaded immediately
-                if let Some(info) = self.texture_manager.get_texture_mut(texture_id) {
+                if let Some(info) = handler.texture_manager.get_texture_mut(texture_id) {
                     info.status = TextureStatus::Loaded;
                     info.width = 32;
                     info.height = 32;
@@ -428,7 +404,7 @@ impl App {
 
         // Search for local textures (collect paths first to avoid borrow issues)
         // Only search for non-RID textures (replaceable_id == 0)
-        let local_paths: Vec<(usize, Option<std::path::PathBuf>)> = self
+        let local_paths: Vec<(usize, Option<std::path::PathBuf>)> = handler
             .texture_manager
             .textures
             .iter()
@@ -436,7 +412,9 @@ impl App {
             .map(|(id, texture_info)| {
                 let path = if texture_info.replaceable_id == 0 && !texture_info.filename.is_empty()
                 {
-                    self.texture_manager.find_local_path(&texture_info.filename)
+                    handler
+                        .texture_manager
+                        .find_local_path(&texture_info.filename)
                 } else {
                     None
                 };
@@ -448,7 +426,7 @@ impl App {
         for (id, path) in local_paths {
             if let Some(local_path) = path {
                 println!("Found local texture: {}", local_path.display());
-                if let Some(texture_info) = self.texture_manager.get_texture_mut(id) {
+                if let Some(texture_info) = handler.texture_manager.get_texture_mut(id) {
                     texture_info.local_path = Some(local_path);
                     // Auto-load only if not already loaded
                     if !texture_info.is_loaded() {
@@ -460,7 +438,7 @@ impl App {
 
         // Auto-load found textures that are not yet loaded
         // Skip RID textures (replaceable_id > 0) - they are generated, not loaded
-        let textures_to_load: Vec<usize> = self
+        let textures_to_load: Vec<usize> = handler
             .texture_manager
             .textures
             .iter()
@@ -481,7 +459,7 @@ impl App {
             }
 
             // Skip textures that were found locally - they're already being loaded
-            if let Some(texture_info) = self.texture_manager.get_texture(texture_id) {
+            if let Some(texture_info) = handler.texture_manager.get_texture(texture_id) {
                 if texture_info.local_path.is_some() {
                     println!(
                         "Skipping background load for texture {} - found locally",
@@ -524,12 +502,12 @@ impl App {
 
         // Initialize animation system with bones
         println!("Initializing animation system...");
-        self.animation_system.init_from_model(&model);
+        handler.animation_system.init_from_model(&model);
         println!("Animation system initialized");
 
         // Reset animation state for new model
         println!("Resetting UI animation state...");
-        self.ui.reset_animation(&handler.model);
+        handler.ui.reset_animation(&handler.model);
         println!("UI animation state reset");
 
         println!("Model loaded successfully");

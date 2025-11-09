@@ -1,13 +1,18 @@
 use crate::app::app::App;
 use crate::app::handler_registry;
+use crate::model::model::Model;
+use crate::renderer::camera::CameraController;
+use crate::settings::Settings;
 use crate::texture::loader::TextureLoadResult;
+use crate::texture::manager::TextureManager;
+use crate::texture::panel::TexturePanel;
+use crate::ui::Ui;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
-use crate::model::model::Model;
 
 pub struct AppHandler {
     pub app: Option<App>,
@@ -19,6 +24,13 @@ pub struct AppHandler {
     pub(crate) model: Option<Model>,
     pub pending_model_path: Option<String>,
     pub current_cursor_pos: Option<(f64, f64)>,
+    pub ui: Ui,
+    pub camera_controller: CameraController,
+    pub animation_system: crate::animation::AnimationSystem,
+    pub egui_wants_pointer: bool,
+    pub texture_panel: TexturePanel,
+    pub texture_manager: TextureManager,
+    pub settings: Settings,
 }
 
 impl ApplicationHandler for AppHandler {

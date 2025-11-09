@@ -16,6 +16,11 @@ use std::ffi::c_void;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use winit::event_loop::{ControlFlow, EventLoop};
+use crate::renderer::camera::{CameraController, CameraState};
+use crate::settings::Settings;
+use crate::texture::manager::TextureManager;
+use crate::texture::panel::TexturePanel;
+use crate::ui::Ui;
 
 const CONFY_APP_NAME: &str = "mdlvis-rs";
 
@@ -78,6 +83,13 @@ fn main() -> Result<(), MdlError> {
         texture_receiver,
         texture_sender,
         current_cursor_pos: None,
+        ui: Ui::new(),
+        texture_panel: TexturePanel::new(),
+        texture_manager: TextureManager::new(),
+        camera_controller: CameraController::new(CameraState::default()),
+        animation_system: animation::AnimationSystem::new(),
+        egui_wants_pointer: false,
+        settings: Settings::load(),
     };
 
     handler_registry::register(handler as *mut _ as *mut c_void);

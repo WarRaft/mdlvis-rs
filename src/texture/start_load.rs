@@ -6,7 +6,7 @@ impl App {
     pub(crate) fn start_texture_load(&mut self, texture_id: usize) {
         let handler = get_global_handler_mut().unwrap();
 
-        if let Some(texture_info) = self.texture_manager.get_texture(texture_id) {
+        if let Some(texture_info) = handler.texture_manager.get_texture(texture_id) {
             // Skip RID textures - they are generated, not loaded
             if texture_info.replaceable_id > 0 {
                 println!(
@@ -21,7 +21,7 @@ impl App {
             let sender = handler.texture_sender.clone();
 
             // Update status to loading
-            if let Some(info) = self.texture_manager.get_texture_mut(texture_id) {
+            if let Some(info) = handler.texture_manager.get_texture_mut(texture_id) {
                 info.status = if local_path.is_some() {
                     TextureStatus::LoadingLocal
                 } else {
