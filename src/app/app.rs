@@ -9,11 +9,9 @@ use crate::texture::manager::{TextureManager, TextureStatus};
 use crate::texture::panel::TexturePanel;
 use crate::ui::Ui;
 use egui_wgpu::ScreenDescriptor;
+use egui_winit::State;
 use std::fs::File;
-use std::sync::Arc;
-use tokio::runtime::Handle;
 use tokio::sync::mpsc;
-use winit::window::Window;
 
 /// Temporary helper to access the global AppHandler registered in `handler_registry`.
 /// Unsafe: returns a mutable reference from a raw pointer. Use only in quick refactor.
@@ -31,7 +29,6 @@ pub struct EventResponse {
 }
 
 pub struct App {
-    pub window: Arc<Window>,
     ui: Ui,
     texture_panel: TexturePanel,
     pub(crate) texture_manager: TextureManager,
@@ -42,18 +39,21 @@ pub struct App {
     camera_controller: CameraController,
     animation_system: crate::animation::AnimationSystem,
     current_cursor_pos: Option<(f64, f64)>,
-    egui_state: egui_winit::State,
+    egui_state: State,
     egui_wants_pointer: bool, // Track if egui is using the pointer
     texture_receiver: mpsc::UnboundedReceiver<TextureLoadResult>,
     pub(crate) texture_sender: mpsc::UnboundedSender<TextureLoadResult>,
-    pub(crate) runtime_handle: Handle,
     settings: Settings,
 }
 
 impl App {
-    pub async fn new(window: Arc<Window>, runtime_handle: Handle) -> Result<Self, MdlError> {
+    pub async fn new() -> Result<Self, MdlError> {
         // Initialize UI
         let ui = Ui::new();
+
+        let handler = get_global_handler_mut().unwrap();
+
+        let window = handler.window.as_ref().unwrap();
 
         // Initialize renderer
         let renderer = Renderer::new(&window).await?;
@@ -66,10 +66,10 @@ impl App {
             options.max_passes = std::num::NonZero::new(2).unwrap();
         });
 
-        let egui_state = egui_winit::State::new(
+        let egui_state = State::new(
             egui_ctx.clone(),
             egui::viewport::ViewportId::ROOT,
-            &*window,
+            &window,
             None,
             None,
             None,
@@ -86,7 +86,6 @@ impl App {
         let camera_controller = CameraController::new(camera_state);
 
         let mut app = Self {
-            window,
             ui,
             texture_panel: TexturePanel::new(),
             texture_manager: TextureManager::new(),
@@ -101,7 +100,6 @@ impl App {
             egui_wants_pointer: false,
             texture_receiver,
             texture_sender,
-            runtime_handle,
             settings,
         };
 
@@ -112,8 +110,11 @@ impl App {
     }
 
     pub fn handle_event(&mut self, event: &winit::event::WindowEvent) -> EventResponse {
+        let handler = get_global_handler_mut().unwrap();
+        let window = handler.window.as_ref().unwrap();
+
         // Let egui handle the event first
-        let egui_response = self.egui_state.on_window_event(&self.window, event);
+        let egui_response = self.egui_state.on_window_event(&window, event);
 
         // For keyboard and some events, if egui consumed it, don't process further
         let egui_wants_input = egui_response.consumed;
@@ -267,7 +268,10 @@ impl App {
             }
         }
 
-        let raw_input = self.egui_state.take_egui_input(&self.window);
+        let handler = get_global_handler_mut().unwrap();
+        let window = handler.window.as_ref().unwrap();
+
+        let raw_input = self.egui_state.take_egui_input(&window);
         let egui_ctx = self.renderer.egui_context();
 
         // Get camera orientation for axis gizmo
@@ -355,16 +359,13 @@ impl App {
         }
 
         self.egui_state
-            .handle_platform_output(&self.window, full_output.platform_output);
+            .handle_platform_output(&window, full_output.platform_output);
 
         let paint_jobs = egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
 
         let screen_descriptor = ScreenDescriptor {
-            size_in_pixels: [
-                self.window.inner_size().width,
-                self.window.inner_size().height,
-            ],
-            pixels_per_point: self.window.scale_factor() as f32,
+            size_in_pixels: [window.inner_size().width, window.inner_size().height],
+            pixels_per_point: window.scale_factor() as f32,
         };
 
         let show_skeleton = self.settings.display.show_skeleton;

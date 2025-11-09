@@ -63,10 +63,13 @@ fn main() -> Result<(), MdlError> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
 
+    // Defer window creation to the ApplicationHandler::resumed callback
+    // (creating a window before the event loop is active is deprecated).
     event_loop.run_app(&mut AppHandler {
         app: None,
         model_path: std::env::args().skip(1).next().map(String::from),
         runtime: Runtime::new()?,
+        window: None,
     })?;
 
     Ok(())

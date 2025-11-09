@@ -1,7 +1,6 @@
 use crate::app::app::App;
 use crate::app::handler_registry;
 use std::ffi::c_void;
-use std::sync::Arc;
 use tokio::runtime::Runtime;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -12,6 +11,7 @@ pub struct AppHandler {
     pub app: Option<App>,
     pub model_path: Option<String>,
     pub runtime: Runtime,
+    pub window: Option<Window>,
 }
 
 impl ApplicationHandler for AppHandler {
@@ -20,17 +20,20 @@ impl ApplicationHandler for AppHandler {
         // WARNING: unsafe. Ensure unregister() is called (Drop below) when handler is gone.
         handler_registry::register(self as *mut _ as *mut c_void);
 
-        if self.app.is_none() {
-            let window_attrs = Window::default_attributes()
-                .with_title("MDLVis-RS - Warcraft 3 Model Viewer")
-                .with_inner_size(winit::dpi::LogicalSize::new(1200.0, 800.0));
+        if self.window.is_none() {
+            self.window = Some(
+                event_loop
+                    .create_window(
+                        Window::default_attributes()
+                            .with_title("MDLVis-RS - Warcraft 3 Model Viewer")
+                            .with_inner_size(winit::dpi::LogicalSize::new(1200.0, 800.0)),
+                    )
+                    .unwrap(),
+            );
+        }
 
-            let window = event_loop.create_window(window_attrs).unwrap();
-            let runtime_handle = self.runtime.handle().clone();
-            let mut app = self
-                .runtime
-                .block_on(App::new(Arc::new(window), runtime_handle))
-                .unwrap();
+        if self.app.is_none() {
+            let mut app = self.runtime.block_on(App::new()).unwrap();
 
             // Load model if provided as command line argument
             if let Some(path) = &self.model_path {
@@ -52,7 +55,9 @@ impl ApplicationHandler for AppHandler {
         if let Some(app) = &mut self.app {
             let response = app.handle_event(&event);
             if response.repaint {
-                app.window.request_redraw();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
             }
             if response.exit {
                 event_loop.exit();
@@ -72,7 +77,9 @@ impl ApplicationHandler for AppHandler {
             if let Err(e) = app.render() {
                 eprintln!("Render error: {:?}", e);
             }
-            app.window.request_redraw();
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
         }
     }
 }

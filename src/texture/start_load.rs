@@ -1,4 +1,4 @@
-use crate::app::app::App;
+use crate::app::app::{App, get_global_handler_mut};
 use crate::texture::loader::{TextureLoadResult, decode_blp, load_from_file, load_texture};
 use crate::texture::manager::TextureStatus;
 
@@ -29,8 +29,8 @@ impl App {
             }
 
             // Spawn background task using runtime handle
-            self.runtime_handle.spawn(async move {
-                println!("Loading texture {}: {}", texture_id, filename);
+            tokio::spawn(async move {
+                println!("🔥Loading texture {}: {}", texture_id, filename);
 
                 let result = if let Some(path) = local_path {
                     // Try local first

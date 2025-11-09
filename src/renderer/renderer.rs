@@ -7,8 +7,8 @@ use crate::renderer::geoset_render_info::GeosetRenderInfo;
 use crate::renderer::line_vertex::LineVertex;
 use crate::renderer::vertex::Vertex;
 use crate::settings::Settings;
-use std::sync::Arc;
 use wgpu::util::DeviceExt;
+use winit::window::Window;
 
 pub struct Renderer {
     pub surface: wgpu::Surface<'static>,
@@ -61,7 +61,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(window: &Arc<winit::window::Window>) -> Result<Self, MdlError> {
+    pub async fn new(window: &Window) -> Result<Self, MdlError> {
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
