@@ -70,11 +70,14 @@ fn main() -> Result<(), MdlError> {
 
     let handler = &mut AppHandler {
         app: None,
-        model_path: std::env::args().skip(1).next().map(String::from),
+        model: None,
+        pending_model_path: std::env::args().skip(1).next().map(String::from),
+        model_path: None,
         runtime: Runtime::new()?,
         window: None,
         texture_receiver,
         texture_sender,
+        current_cursor_pos: None,
     };
 
     handler_registry::register(handler as *mut _ as *mut c_void);

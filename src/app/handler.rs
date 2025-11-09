@@ -7,6 +7,7 @@ use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
+use crate::model::model::Model;
 
 pub struct AppHandler {
     pub app: Option<App>,
@@ -15,6 +16,9 @@ pub struct AppHandler {
     pub window: Option<Window>,
     pub texture_receiver: mpsc::UnboundedReceiver<TextureLoadResult>,
     pub texture_sender: mpsc::UnboundedSender<TextureLoadResult>,
+    pub(crate) model: Option<Model>,
+    pub pending_model_path: Option<String>,
+    pub current_cursor_pos: Option<(f64, f64)>,
 }
 
 impl ApplicationHandler for AppHandler {
@@ -67,7 +71,7 @@ impl ApplicationHandler for AppHandler {
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(app) = &mut self.app {
             // Check if there's a pending model to load
-            if let Some(path) = app.pending_model_path.take() {
+            if let Some(path) = self.pending_model_path.take() {
                 if let Err(e) = self.runtime.block_on(app.load_model(&path)) {
                     eprintln!("Failed to load model '{}': {}", path, e);
                 }

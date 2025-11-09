@@ -1,5 +1,4 @@
 use crate::error::MdlError;
-use crate::model::model::Model;
 use crate::parser::load::load;
 use crate::renderer::camera::{CameraController, CameraState};
 use crate::renderer::renderer::Renderer;
@@ -29,13 +28,9 @@ pub struct EventResponse {
 
 pub struct App {
     ui: Ui,
-    model: Option<Model>,
-    model_path: Option<String>,
-    pub pending_model_path: Option<String>, // Path to model that should be loaded
     renderer: Renderer,
     camera_controller: CameraController,
     animation_system: crate::animation::AnimationSystem,
-    current_cursor_pos: Option<(f64, f64)>,
     egui_state: State,
     egui_wants_pointer: bool,
     texture_panel: TexturePanel,
@@ -83,13 +78,9 @@ impl App {
             ui,
             texture_panel: TexturePanel::new(),
             texture_manager: TextureManager::new(),
-            model: None,
-            model_path: None,
-            pending_model_path: None,
             renderer,
             camera_controller,
             animation_system: crate::animation::AnimationSystem::new(),
-            current_cursor_pos: None,
             egui_state,
             egui_wants_pointer: false,
             settings,
@@ -163,7 +154,7 @@ impl App {
                         exit: false,
                     };
                 }
-                self.current_cursor_pos = Some((position.x, position.y));
+                handler.current_cursor_pos = Some((position.x, position.y));
                 self.camera_controller
                     .on_mouse_move((position.x, position.y));
             }
@@ -276,7 +267,7 @@ impl App {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs_f64();
-        self.ui.animate(&self.model, current_time);
+        self.ui.animate(&handler.model, current_time);
 
         let mut reset_camera = false;
         let mut current_frame = 0.0;
@@ -296,7 +287,7 @@ impl App {
                 use_animation_ui,
             ) = self.ui.show(
                 ctx,
-                &mut self.model,
+                &mut handler.model,
                 camera_yaw,
                 camera_pitch,
                 &mut self.settings,
@@ -336,7 +327,7 @@ impl App {
                 .pick_file()
             {
                 if let Some(path_str) = path.to_str() {
-                    self.pending_model_path = Some(path_str.to_string());
+                    handler.pending_model_path = Some(path_str.to_string());
                 }
             }
         }
@@ -349,7 +340,7 @@ impl App {
         // Update renderer colors if they changed
         if colors_changed {
             self.renderer
-                .update_colors(&self.settings, self.model.as_ref());
+                .update_colors(&self.settings, handler.model.as_ref());
         }
 
         self.egui_state
@@ -369,7 +360,7 @@ impl App {
         let far_plane = self.settings.display.far_plane;
 
         // Update animation ONLY if use_animation flag is enabled
-        if use_animation && self.model.is_some() && !self.animation_system.bones.is_empty() {
+        if use_animation && handler.model.is_some() && !self.animation_system.bones.is_empty() {
             self.animation_system.update(current_frame);
             self.renderer.update_animation(&self.animation_system);
         } else {
@@ -381,7 +372,7 @@ impl App {
         self.renderer.camera = self.camera_controller.state().clone();
 
         self.renderer.render(
-            self.model.as_ref(),
+            handler.model.as_ref(),
             show_skeleton,
             show_grid,
             show_bounding_box,
@@ -404,7 +395,7 @@ impl App {
         let model = load(&mut file)?;
 
         // Initialize texture manager with model path and textures
-        self.model_path = Some(path.to_string());
+        handler.model_path = Some(path.to_string());
         self.texture_manager
             .set_model_path(std::path::Path::new(path));
         self.texture_manager.init_from_model(&model);
@@ -529,7 +520,7 @@ impl App {
             });
         }
 
-        self.model = Some(model.clone());
+        handler.model = Some(model.clone());
 
         // Initialize animation system with bones
         println!("Initializing animation system...");
@@ -538,7 +529,7 @@ impl App {
 
         // Reset animation state for new model
         println!("Resetting UI animation state...");
-        self.ui.reset_animation(&self.model);
+        self.ui.reset_animation(&handler.model);
         println!("UI animation state reset");
 
         println!("Model loaded successfully");
