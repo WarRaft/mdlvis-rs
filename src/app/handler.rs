@@ -1,7 +1,8 @@
 use crate::app::app::App;
 use crate::app::handler_registry;
-use std::ffi::c_void;
+use crate::texture::loader::TextureLoadResult;
 use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
@@ -12,14 +13,12 @@ pub struct AppHandler {
     pub model_path: Option<String>,
     pub runtime: Runtime,
     pub window: Option<Window>,
+    pub texture_receiver: mpsc::UnboundedReceiver<TextureLoadResult>,
+    pub texture_sender: mpsc::UnboundedSender<TextureLoadResult>,
 }
 
 impl ApplicationHandler for AppHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // Register global raw pointer to this handler for temporary access from `App`.
-        // WARNING: unsafe. Ensure unregister() is called (Drop below) when handler is gone.
-        handler_registry::register(self as *mut _ as *mut c_void);
-
         if self.window.is_none() {
             self.window = Some(
                 event_loop

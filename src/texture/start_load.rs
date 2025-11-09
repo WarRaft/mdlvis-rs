@@ -4,6 +4,8 @@ use crate::texture::manager::TextureStatus;
 
 impl App {
     pub(crate) fn start_texture_load(&mut self, texture_id: usize) {
+        let handler = get_global_handler_mut().unwrap();
+
         if let Some(texture_info) = self.texture_manager.get_texture(texture_id) {
             // Skip RID textures - they are generated, not loaded
             if texture_info.replaceable_id > 0 {
@@ -16,7 +18,7 @@ impl App {
 
             let filename = texture_info.filename.clone();
             let local_path = texture_info.local_path.clone();
-            let sender = self.texture_sender.clone();
+            let sender = handler.texture_sender.clone();
 
             // Update status to loading
             if let Some(info) = self.texture_manager.get_texture_mut(texture_id) {

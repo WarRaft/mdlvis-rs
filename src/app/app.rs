@@ -11,7 +11,6 @@ use crate::ui::Ui;
 use egui_wgpu::ScreenDescriptor;
 use egui_winit::State;
 use std::fs::File;
-use tokio::sync::mpsc;
 
 /// Temporary helper to access the global AppHandler registered in `handler_registry`.
 /// Unsafe: returns a mutable reference from a raw pointer. Use only in quick refactor.
@@ -41,8 +40,6 @@ pub struct App {
     egui_wants_pointer: bool,
     texture_panel: TexturePanel,
     pub texture_manager: TextureManager,
-    texture_receiver: mpsc::UnboundedReceiver<TextureLoadResult>,
-    pub texture_sender: mpsc::UnboundedSender<TextureLoadResult>,
     settings: Settings,
 }
 
@@ -75,9 +72,6 @@ impl App {
             None,
         );
 
-        // Create channel for background texture loading
-        let (texture_sender, texture_receiver) = mpsc::unbounded_channel();
-
         // Load settings
         let settings = Settings::load();
 
@@ -98,8 +92,6 @@ impl App {
             current_cursor_pos: None,
             egui_state,
             egui_wants_pointer: false,
-            texture_receiver,
-            texture_sender,
             settings,
         };
 
@@ -231,7 +223,9 @@ impl App {
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        while let Ok(result) = self.texture_receiver.try_recv() {
+        let handler = get_global_handler_mut().unwrap();
+
+        while let Ok(result) = handler.texture_receiver.try_recv() {
             match result {
                 TextureLoadResult::Success {
                     texture_id,
@@ -403,6 +397,8 @@ impl App {
     pub async fn load_model(&mut self, path: &str) -> Result<(), MdlError> {
         println!("Loading model: {}", path);
 
+        let handler = get_global_handler_mut().unwrap();
+
         let mut file = File::open(path)?;
 
         let model = load(&mut file)?;
@@ -510,7 +506,7 @@ impl App {
                 continue; // Skip if no texture to load
             }
 
-            let sender = self.texture_sender.clone();
+            let sender = handler.texture_sender.clone();
 
             // Spawn background task to download from internet
             tokio::spawn(async move {

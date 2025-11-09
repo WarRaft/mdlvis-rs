@@ -10,8 +10,11 @@ mod texture;
 mod ui;
 
 use crate::app::handler::AppHandler;
+use crate::app::handler_registry;
 use crate::error::MdlError;
+use std::ffi::c_void;
 use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 const CONFY_APP_NAME: &str = "mdlvis-rs";
@@ -63,14 +66,22 @@ fn main() -> Result<(), MdlError> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    // Defer window creation to the ApplicationHandler::resumed callback
-    // (creating a window before the event loop is active is deprecated).
-    event_loop.run_app(&mut AppHandler {
+    let (texture_sender, texture_receiver) = mpsc::unbounded_channel();
+
+    let handler = &mut AppHandler {
         app: None,
         model_path: std::env::args().skip(1).next().map(String::from),
         runtime: Runtime::new()?,
         window: None,
-    })?;
+        texture_receiver,
+        texture_sender,
+    };
+
+    handler_registry::register(handler as *mut _ as *mut c_void);
+
+    // Defer window creation to the ApplicationHandler::resumed callback
+    // (creating a window before the event loop is active is deprecated).
+    event_loop.run_app(handler)?;
 
     Ok(())
 }
