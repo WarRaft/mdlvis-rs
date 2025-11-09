@@ -30,19 +30,19 @@ pub struct EventResponse {
 
 pub struct App {
     ui: Ui,
-    texture_panel: TexturePanel,
-    pub(crate) texture_manager: TextureManager,
     model: Option<Model>,
     model_path: Option<String>,
-    pub(crate) pending_model_path: Option<String>, // Path to model that should be loaded
+    pub pending_model_path: Option<String>, // Path to model that should be loaded
     renderer: Renderer,
     camera_controller: CameraController,
     animation_system: crate::animation::AnimationSystem,
     current_cursor_pos: Option<(f64, f64)>,
     egui_state: State,
-    egui_wants_pointer: bool, // Track if egui is using the pointer
+    egui_wants_pointer: bool,
+    texture_panel: TexturePanel,
+    pub texture_manager: TextureManager,
     texture_receiver: mpsc::UnboundedReceiver<TextureLoadResult>,
-    pub(crate) texture_sender: mpsc::UnboundedSender<TextureLoadResult>,
+    pub texture_sender: mpsc::UnboundedSender<TextureLoadResult>,
     settings: Settings,
 }
 
