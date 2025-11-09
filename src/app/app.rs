@@ -1,30 +1,19 @@
 use crate::error::MdlError;
+use crate::model::model::Model;
 use crate::parser::load::load;
 use crate::renderer::camera::{CameraController, CameraState};
 use crate::renderer::renderer::Renderer;
 use crate::settings::Settings;
-use crate::texture::loader::load_texture;
+use crate::texture::loader::{TextureLoadResult, load_texture};
 use crate::texture::manager::{TextureManager, TextureStatus};
 use crate::texture::panel::TexturePanel;
 use crate::ui::Ui;
+use egui_wgpu::ScreenDescriptor;
 use std::fs::File;
 use std::sync::Arc;
+use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use winit::window::Window;
-use crate::model::model::Model;
-
-pub enum TextureLoadResult {
-    Success {
-        texture_id: usize,
-        rgba_data: Vec<u8>,
-        width: u32,
-        height: u32,
-    },
-    Error {
-        texture_id: usize,
-        error: String,
-    },
-}
 
 pub struct EventResponse {
     pub repaint: bool,
@@ -47,15 +36,12 @@ pub struct App {
     egui_wants_pointer: bool, // Track if egui is using the pointer
     texture_receiver: mpsc::UnboundedReceiver<TextureLoadResult>,
     pub(crate) texture_sender: mpsc::UnboundedSender<TextureLoadResult>,
-    pub(crate) runtime_handle: tokio::runtime::Handle,
+    pub(crate) runtime_handle: Handle,
     settings: Settings,
 }
 
 impl App {
-    pub async fn new(
-        window: Arc<Window>,
-        runtime_handle: tokio::runtime::Handle,
-    ) -> Result<Self, MdlError> {
+    pub async fn new(window: Arc<Window>, runtime_handle: Handle) -> Result<Self, MdlError> {
         // Initialize UI
         let ui = Ui::new();
 
@@ -339,7 +325,6 @@ impl App {
         if open_model {
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("MDX Model", &["mdx"])
-                .add_filter("MDL Model", &["mdl"])
                 .pick_file()
             {
                 if let Some(path_str) = path.to_str() {
@@ -364,7 +349,7 @@ impl App {
 
         let paint_jobs = egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
 
-        let screen_descriptor = egui_wgpu::ScreenDescriptor {
+        let screen_descriptor = ScreenDescriptor {
             size_in_pixels: [
                 self.window.inner_size().width,
                 self.window.inner_size().height,

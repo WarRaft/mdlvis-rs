@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::CONFY_APP_NAME;
 
-// Individual settings - each saved separately to prevent data loss on structure changes
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisplaySettings {
@@ -91,11 +91,11 @@ impl Default for UiSettings {
 
 impl UiSettings {
     pub fn load() -> Self {
-        confy::load("mdlvis-rs", "ui").unwrap_or_default()
+        confy::load(CONFY_APP_NAME, "ui").unwrap_or_default()
     }
 
     pub fn save(&self) {
-        let _ = confy::store("mdlvis-rs", "ui", self);
+        let _ = confy::store(CONFY_APP_NAME, "ui", self);
     }
 }
 

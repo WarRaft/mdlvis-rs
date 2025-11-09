@@ -1,5 +1,5 @@
-use crate::app::{App, TextureLoadResult};
-use crate::texture::loader::{decode_blp, load_from_file, load_texture};
+use crate::app::app::App;
+use crate::texture::loader::{TextureLoadResult, decode_blp, load_from_file, load_texture};
 use crate::texture::manager::TextureStatus;
 
 impl App {

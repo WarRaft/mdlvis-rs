@@ -3,6 +3,19 @@ use std::path::Path;
 
 const TEXTURE_BASE_URL: &str = "https://github.com/WarRaft/War3.mpq/raw/refs/heads/main/lowercase";
 
+pub enum TextureLoadResult {
+    Success {
+        texture_id: usize,
+        rgba_data: Vec<u8>,
+        width: u32,
+        height: u32,
+    },
+    Error {
+        texture_id: usize,
+        error: String,
+    },
+}
+
 /// Load texture from local file
 pub async fn load_from_file(path: &Path) -> Result<Vec<u8>, MdlError> {
     let data = tokio::fs::read(path).await?;
@@ -20,22 +33,22 @@ pub async fn download_texture(path: &str) -> Result<Vec<u8>, MdlError> {
     let url = format!("{}/{}", TEXTURE_BASE_URL, normalized_path);
 
     // Use async HTTP client
-    let response = reqwest::get(&url)
-        .await
-        .map_err(|e| MdlError::new("network-error").with_arg("msg", format!("Failed to download from {}: {}", url, e)))?;
+    let response = reqwest::get(&url).await.map_err(|e| {
+        MdlError::new("network-error")
+            .with_arg("msg", format!("Failed to download from {}: {}", url, e))
+    })?;
 
     if !response.status().is_success() {
-        return Err(MdlError::new("network-error").with_arg("msg", format!(
-            "HTTP {} from {}",
-            response.status(),
-            url
-        )));
+        return Err(MdlError::new("network-error")
+            .with_arg("msg", format!("HTTP {} from {}", response.status(), url)));
     }
 
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| MdlError::new("network-error").with_arg("msg", format!("Failed to read response from {}: {}", url, e)))?;
+    let bytes = response.bytes().await.map_err(|e| {
+        MdlError::new("network-error").with_arg(
+            "msg",
+            format!("Failed to read response from {}: {}", url, e),
+        )
+    })?;
     Ok(bytes.to_vec())
 }
 

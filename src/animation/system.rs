@@ -1,6 +1,3 @@
-// Main animation system
-// Based on CalcAnimCoords from mdlDraw.pas (line 2310)
-
 use super::skeleton::*;
 use super::types::*;
 use crate::model::model::Model;
@@ -12,8 +9,6 @@ pub struct AnimationSystem {
     pub helpers: Vec<BoneState>,
     pub controllers: Vec<Controller>,
     pub pivot_points: Vec<glm::Vec3>,
-    pub texture_anims: Vec<TextureAnim>,
-    pub geoset_anims: Vec<GeosetAnim>,
     current_frame: f32,
 }
 
@@ -24,8 +19,6 @@ impl AnimationSystem {
             helpers: Vec::new(),
             controllers: Vec::new(),
             pivot_points: Vec::new(),
-            texture_anims: Vec::new(),
-            geoset_anims: Vec::new(),
             current_frame: 0.0,
         }
     }
@@ -84,119 +77,6 @@ impl AnimationSystem {
                 frame_int,
             );
         }
-    }
-
-    /// Reset all bones to base (T-pose) state
-    /// Sets frame to 0 and recalculates all transformations
-    pub fn reset_to_base_pose(&mut self) {
-        self.current_frame = 0.0;
-
-        // Reset all "IsReady" flags
-        for bone in &mut self.bones {
-            bone.is_ready = false;
-        }
-        for helper in &mut self.helpers {
-            helper.is_ready = false;
-        }
-
-        // Interpolate to frame 0 (base pose)
-        for i in 0..self.helpers.len() {
-            interp_bone(
-                &mut self.helpers[i],
-                0,
-                &self.controllers,
-                &self.pivot_points,
-            );
-        }
-        for i in 0..self.bones.len() {
-            interp_bone(&mut self.bones[i], 0, &self.controllers, &self.pivot_points);
-        }
-
-        // Calculate absolute transformations
-        for i in 0..self.helpers.len() {
-            calc_bone(
-                self.bones.len() + i,
-                &mut self.bones,
-                &mut self.helpers,
-                &self.controllers,
-                &self.pivot_points,
-                0,
-            );
-        }
-        for i in 0..self.bones.len() {
-            calc_bone(
-                i,
-                &mut self.bones,
-                &mut self.helpers,
-                &self.controllers,
-                &self.pivot_points,
-                0,
-            );
-        }
-    }
-
-    /// Get bone by index
-    pub fn get_bone(&self, index: usize) -> Option<&BoneState> {
-        self.bones.get(index)
-    }
-
-    /// Get all bones
-    pub fn get_bones(&self) -> &[BoneState] {
-        &self.bones
-    }
-
-    /// Add a bone
-    pub fn add_bone(&mut self, bone: BoneState) {
-        self.bones.push(bone);
-    }
-
-    /// Add a helper
-    pub fn add_helper(&mut self, helper: BoneState) {
-        self.helpers.push(helper);
-    }
-
-    /// Add a controller
-    pub fn add_controller(&mut self, controller: Controller) -> i32 {
-        let idx = self.controllers.len() as i32;
-        self.controllers.push(controller);
-        idx
-    }
-
-    /// Add a pivot point
-    pub fn add_pivot_point(&mut self, point: glm::Vec3) {
-        self.pivot_points.push(point);
-    }
-
-    /// Set pivot points
-    pub fn set_pivot_points(&mut self, points: Vec<glm::Vec3>) {
-        self.pivot_points = points;
-    }
-
-    /// Add texture animation
-    pub fn add_texture_anim(&mut self, anim: TextureAnim) -> i32 {
-        let idx = self.texture_anims.len() as i32;
-        self.texture_anims.push(anim);
-        idx
-    }
-
-    /// Add geoset animation
-    pub fn add_geoset_anim(&mut self, anim: GeosetAnim) {
-        self.geoset_anims.push(anim);
-    }
-
-    /// Get current frame
-    pub fn get_current_frame(&self) -> f32 {
-        self.current_frame
-    }
-
-    /// Get number of bones
-    pub fn bone_count(&self) -> usize {
-        self.bones.len()
-    }
-
-    /// Get number of helpers
-    pub fn helper_count(&self) -> usize {
-        self.helpers.len()
     }
 }
 
