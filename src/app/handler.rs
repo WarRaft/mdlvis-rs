@@ -23,7 +23,7 @@ pub struct AppHandler {
     pub window: Option<Window>,
     pub texture_receiver: mpsc::UnboundedReceiver<TextureLoadResult>,
     pub texture_sender: mpsc::UnboundedSender<TextureLoadResult>,
-    pub(crate) model: Option<Model>,
+    pub model: Option<Model>,
     pub pending_model_path: Option<String>,
     pub current_cursor_pos: Option<(f64, f64)>,
     pub ui: Ui,
@@ -77,8 +77,7 @@ impl ApplicationHandler for AppHandler {
         }
 
         if self.app.is_none() {
-            let app = self.runtime.block_on(App::new()).unwrap();
-            self.app = Some(app);
+            self.app = Some(App {});
         }
     }
 

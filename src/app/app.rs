@@ -23,10 +23,6 @@ pub struct EventResponse {
 pub struct App;
 
 impl App {
-    pub async fn new() -> Result<Self, MdlError> {
-        Ok(Self {})
-    }
-
     pub fn handle_event(&mut self, event: &winit::event::WindowEvent) -> EventResponse {
         let handler = get_global_handler_mut().unwrap();
         let window = handler.window.as_ref().unwrap();
