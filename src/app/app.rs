@@ -1,6 +1,5 @@
 use crate::error::MdlError;
 use crate::parser::load::load;
-use crate::renderer::renderer::Renderer;
 use crate::texture::loader::{TextureLoadResult, load_texture};
 use crate::texture::manager::TextureStatus;
 use egui_wgpu::ScreenDescriptor;
@@ -21,24 +20,11 @@ pub struct EventResponse {
     pub exit: bool,
 }
 
-pub struct App {
-    renderer: Renderer,
-}
+pub struct App;
 
 impl App {
     pub async fn new() -> Result<Self, MdlError> {
-        let handler = get_global_handler_mut().unwrap();
-
-        let window = handler.window.as_ref().unwrap();
-
-        let renderer = Renderer::new(&window).await?;
-
-        let mut app = Self { renderer };
-
-        // Initialize renderer colors from loaded settings
-        app.renderer.update_colors(&handler.settings, None);
-
-        Ok(app)
+        Ok(Self {})
     }
 
     pub fn handle_event(&mut self, event: &winit::event::WindowEvent) -> EventResponse {
@@ -77,7 +63,7 @@ impl App {
                 }
             }
             winit::event::WindowEvent::Resized(size) => {
-                self.renderer.resize(*size);
+                handler.renderer.as_mut().unwrap().resize(*size);
             }
             winit::event::WindowEvent::MouseInput { state, button, .. } => {
                 // Don't handle mouse input if egui wants the pointer
@@ -178,7 +164,10 @@ impl App {
                     width,
                     height,
                 } => {
-                    self.renderer
+                    handler
+                        .renderer
+                        .as_mut()
+                        .unwrap()
                         .load_texture_from_rgba(&rgba_data, width, height, texture_id);
 
                     // Update texture manager status
@@ -216,7 +205,8 @@ impl App {
         let egui_ctx = egui_state.egui_ctx().clone();
 
         // Get camera orientation for axis gizmo
-        let (camera_yaw, camera_pitch) = self.renderer.camera.get_orientation();
+        let (camera_yaw, camera_pitch) =
+            handler.renderer.as_mut().unwrap().camera.get_orientation();
 
         // Update animation playback BEFORE UI (so current_frame is up-to-date)
         let current_time = std::time::SystemTime::now()
@@ -247,7 +237,7 @@ impl App {
                 camera_yaw,
                 camera_pitch,
                 &mut handler.settings,
-                &mut self.renderer,
+                &mut handler.renderer.as_mut().unwrap(),
             );
 
             reset_camera = reset_camera_ui;
@@ -261,7 +251,7 @@ impl App {
             if let Some(requests) = handler.texture_panel.show(
                 ctx,
                 &handler.texture_manager,
-                &mut self.renderer,
+                &mut handler.renderer.as_mut().unwrap(),
                 &mut handler.settings.ui.show_texture_panel,
             ) {
                 texture_load_requests = requests;
@@ -295,7 +285,10 @@ impl App {
 
         // Update renderer colors if they changed
         if colors_changed {
-            self.renderer
+            handler
+                .renderer
+                .as_mut()
+                .unwrap()
                 .update_colors(&handler.settings, handler.model.as_ref());
         }
 
@@ -317,16 +310,24 @@ impl App {
         // Update animation ONLY if use_animation flag is enabled
         if use_animation && handler.model.is_some() && !handler.animation_system.bones.is_empty() {
             handler.animation_system.update(current_frame);
-            self.renderer.update_animation(&handler.animation_system);
+            handler
+                .renderer
+                .as_mut()
+                .unwrap()
+                .update_animation(&handler.animation_system);
         } else {
             // Reset to original parsed vertices (no animation)
-            self.renderer.reset_to_original_vertices();
+            handler
+                .renderer
+                .as_mut()
+                .unwrap()
+                .reset_to_original_vertices();
         }
 
         // Sync camera state to renderer
-        self.renderer.camera = handler.camera_controller.state().clone();
+        handler.renderer.as_mut().unwrap().camera = handler.camera_controller.state().clone();
 
-        self.renderer.render(
+        handler.renderer.as_mut().unwrap().render(
             handler.model.as_ref(),
             show_skeleton,
             show_grid,
@@ -355,14 +356,18 @@ impl App {
             .texture_manager
             .set_model_path(std::path::Path::new(path));
         handler.texture_manager.init_from_model(&model);
-        self.renderer.update_model(&model);
+        handler.renderer.as_mut().unwrap().update_model(&model);
 
         // First, create RID textures (they are generated, not loaded)
         for (texture_id, texture) in model.textures.iter().enumerate() {
             if texture.replaceable_id == 1 {
                 // Team color (RID 1) - create solid color texture
                 println!("Creating team color texture for texture {}", texture_id);
-                self.renderer.create_team_color_texture(texture_id);
+                handler
+                    .renderer
+                    .as_mut()
+                    .unwrap()
+                    .create_team_color_texture(texture_id);
                 // Mark as loaded immediately
                 if let Some(info) = handler.texture_manager.get_texture_mut(texture_id) {
                     info.status = TextureStatus::Loaded;
@@ -372,7 +377,11 @@ impl App {
             } else if texture.replaceable_id == 2 {
                 // Team glow (RID 2) - create 32x32 glow texture with alpha map
                 println!("Creating team glow texture for texture {}", texture_id);
-                self.renderer.create_team_glow_texture(texture_id);
+                handler
+                    .renderer
+                    .as_mut()
+                    .unwrap()
+                    .create_team_glow_texture(texture_id);
                 // Mark as loaded immediately
                 if let Some(info) = handler.texture_manager.get_texture_mut(texture_id) {
                     info.status = TextureStatus::Loaded;

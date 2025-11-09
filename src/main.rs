@@ -72,7 +72,7 @@ fn main() -> Result<(), MdlError> {
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let (texture_sender, texture_receiver) = mpsc::unbounded_channel();
-    
+
     let handler = &mut AppHandler {
         app: None,
         model: None,
@@ -91,6 +91,7 @@ fn main() -> Result<(), MdlError> {
         egui_wants_pointer: false,
         settings: Settings::load(),
         egui_state: None,
+        renderer: None,
     };
 
     handler_registry::register(handler as *mut _ as *mut c_void);

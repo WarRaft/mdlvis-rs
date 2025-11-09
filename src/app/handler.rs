@@ -2,6 +2,7 @@ use crate::app::app::App;
 use crate::app::handler_registry;
 use crate::model::model::Model;
 use crate::renderer::camera::CameraController;
+use crate::renderer::renderer::Renderer;
 use crate::settings::Settings;
 use crate::texture::loader::TextureLoadResult;
 use crate::texture::manager::TextureManager;
@@ -33,6 +34,7 @@ pub struct AppHandler {
     pub texture_manager: TextureManager,
     pub settings: Settings,
     pub egui_state: Option<State>,
+    pub renderer: Option<Renderer>,
 }
 
 impl ApplicationHandler for AppHandler {
@@ -61,6 +63,17 @@ impl ApplicationHandler for AppHandler {
                 None,
                 None,
             ));
+
+            let rt = Runtime::new().unwrap();
+            self.renderer = Some(
+                rt.block_on(async { Renderer::new(&self.window.as_ref().unwrap()).await })
+                    .unwrap(),
+            );
+
+            self.renderer
+                .as_mut()
+                .unwrap()
+                .update_colors(&self.settings, None);
         }
 
         if self.app.is_none() {
